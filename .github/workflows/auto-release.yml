@@ -1,0 +1,58 @@
+name: Automated Release
+
+on:
+  push:
+    branches:
+      - main  # Trigger on pushes to the main branch
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+    # Step 1: Check out the repository
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    # Step 2: Set up Go
+    - name: Set Up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: 1.19  # Adjust Go version as required
+
+    # Step 3: Install dependencies
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang llvm make gcc bpfcc-tools
+
+    # Step 4: Build for AMD64
+    - name: Build for AMD64
+      run: |
+        make clean
+        GOARCH=amd64 make
+        tar -czf cilium-linux-amd64.tar.gz cilium
+        sha256sum cilium-linux-amd64.tar.gz > cilium-linux-amd64.tar.gz.sha256sum
+
+    # Step 5: Build for ARM64
+    - name: Build for ARM64
+      run: |
+        make clean
+        GOARCH=arm64 make
+        tar -czf cilium-linux-arm64.tar.gz cilium
+        sha256sum cilium-linux-arm64.tar.gz > cilium-linux-arm64.tar.gz.sha256sum
+
+    # Step 6: Create GitHub release
+    - name: Create GitHub Release
+      uses: ncipollo/release-action@v1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        artifacts: |
+          cilium-linux-amd64.tar.gz
+          cilium-linux-amd64.tar.gz.sha256sum
+          cilium-linux-arm64.tar.gz
+          cilium-linux-arm64.tar.gz.sha256sum
+        tag: v${{ github.run_number }}
+        releaseName: "Automated Release v${{ github.run_number }}"
+        generateReleaseNotes: true
