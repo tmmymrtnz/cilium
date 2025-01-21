@@ -47,9 +47,15 @@ jobs:
         tar -czf cilium-linux-amd64.tar.gz -C $(dirname "$CILIUM_BINARY") $(basename "$CILIUM_BINARY")
         sha256sum cilium-linux-amd64.tar.gz > cilium-linux-amd64.tar.gz.sha256sum
 
+    - name: Setup QEMU for ARM64 Emulation
+      uses: docker/setup-qemu-action@v2
+      with:
+        platforms: linux/arm64
+
     - name: Build Cilium for ARM64 in Docker
       run: |
-        docker run --rm -v $(pwd):/workspace -w /workspace --platform linux/arm64 \
+        echo "Building Cilium for ARM64 in Docker..."
+        docker run --rm --privileged -v $(pwd):/workspace -w /workspace --platform linux/arm64 \
           ubuntu:22.04 bash -c "
           apt-get update && apt-get install -y clang llvm make gcc bpfcc-tools libelf-dev && \
           make clean && \
