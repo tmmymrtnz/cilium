@@ -34,54 +34,82 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y clang llvm make gcc bpfcc-tools libelf-dev
+        clang --version
+        llvm-config --version
 
-    # Step 5: Build Cilium
-    - name: Build Cilium
+    # Step 5: Debug Architecture
+    - name: Verify Runner Architecture
+      run: uname -m
+
+    # Step 6: Clean Build Environment
+    - name: Clean Build Environment
       run: |
         make clean
-        GOARCH=amd64 make VERBOSE=1
+        for i in cilium-dbg daemon cilium-health bugtool operator plugins tools hubble-relay bpf clustermesh-apiserver; do
+          make -C $i clean || true
+        done
 
-    # Step 6: Locate and Package Binary for AMD64
+    # Step 7: Debug Precheck
+    - name: Debug Precheck
+      run: |
+        echo "Running precheck (if applicable)..."
+        make precheck || echo "Precheck failed, bypassing..."
+
+    # Step 8: Build Cilium for AMD64
+    - name: Build Cilium for AMD64
+      run: |
+        echo "Building Cilium for AMD64..."
+        make clean
+        GOARCH=amd64 make VERBOSE=1 || { echo "Build failed for AMD64!"; exit 1; }
+
+    # Step 9: Locate and Package Binary for AMD64
     - name: Locate and Package Cilium for AMD64
       run: |
-        # Search for the binary
+        echo "Locating Cilium binary for AMD64..."
         CILIUM_BINARY=$(find . -name cilium -type f | head -n 1)
         if [ -z "$CILIUM_BINARY" ]; then
-          echo "Cilium binary not found!"
+          echo "Cilium binary not found for AMD64!"
           exit 1
         fi
-        echo "Cilium binary found at: $CILIUM_BINARY"
-        # Package the binary
+        echo "Packaging Cilium binary found at: $CILIUM_BINARY"
         tar -czf cilium-linux-amd64.tar.gz -C $(dirname "$CILIUM_BINARY") $(basename "$CILIUM_BINARY")
         sha256sum cilium-linux-amd64.tar.gz > cilium-linux-amd64.tar.gz.sha256sum
 
-    # Step 7: Build for ARM64
-    - name: Build for ARM64
+    # Step 10: Build Cilium for ARM64
+    - name: Build Cilium for ARM64
       run: |
+        echo "Building Cilium for ARM64..."
         make clean
-        GOARCH=arm64 make VERBOSE=1
+        GOARCH=arm64 make VERBOSE=1 || { echo "Build failed for ARM64!"; exit 1; }
 
-    # Step 8: Locate and Package Binary for ARM64
+    # Step 11: Locate and Package Binary for ARM64
     - name: Locate and Package Cilium for ARM64
       run: |
-        # Search for the binary
+        echo "Locating Cilium binary for ARM64..."
         CILIUM_BINARY=$(find . -name cilium -type f | head -n 1)
         if [ -z "$CILIUM_BINARY" ]; then
           echo "Cilium binary not found for ARM64!"
           exit 1
         fi
-        echo "Cilium binary found at: $CILIUM_BINARY"
-        # Package the binary
+        echo "Packaging Cilium binary found at: $CILIUM_BINARY"
         tar -czf cilium-linux-arm64.tar.gz -C $(dirname "$CILIUM_BINARY") $(basename "$CILIUM_BINARY")
         sha256sum cilium-linux-arm64.tar.gz > cilium-linux-arm64.tar.gz.sha256sum
 
-    # Step 9: Verify Artifacts
+    # Step 12: Verify Artifacts
     - name: Verify Generated Artifacts
       run: |
+        echo "Verifying generated artifacts..."
         ls -lh cilium-linux-*.tar.gz
         ls -lh cilium-linux-*.sha256sum
 
-    # Step 10: Create GitHub Release
+    # Step 13: Debug Directory Contents
+    - name: List Build Directories
+      run: |
+        echo "Listing ./bin and ./output directories..."
+        ls -R ./bin || echo "./bin directory not found"
+        ls -R ./output || echo "./output directory not found"
+
+    # Step 14: Create GitHub Release
     - name: Create GitHub Release
       uses: ncipollo/release-action@v1
       with:
