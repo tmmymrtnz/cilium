@@ -50,16 +50,15 @@ jobs:
     # Step 7: Verify Binary Location
     - name: Verify Binary Location
       run: |
-        if [ ! -f ./bin/cilium ]; then
-          echo "Cilium binary not found in ./bin! Searching..."
-          find . -name cilium
+        if [ ! -f ./cilium-cli/cmd/cilium ]; then
+          echo "Cilium binary not found in ./cilium-cli/cmd!"
           exit 1
         fi
 
     # Step 8: Package Binary for AMD64
     - name: Package Cilium for AMD64
       run: |
-        tar -czf cilium-linux-amd64.tar.gz -C ./bin cilium
+        tar -czf cilium-linux-amd64.tar.gz -C ./cilium-cli/cmd cilium
         sha256sum cilium-linux-amd64.tar.gz > cilium-linux-amd64.tar.gz.sha256sum
 
     # Step 9: Build for ARM64
@@ -67,11 +66,11 @@ jobs:
       run: |
         make clean
         GOARCH=arm64 make VERBOSE=1
-        if [ ! -f ./bin/cilium ]; then
+        if [ ! -f ./cilium-cli/cmd/cilium ]; then
           echo "Cilium binary not found for ARM64!"
           exit 1
         fi
-        tar -czf cilium-linux-arm64.tar.gz -C ./bin cilium
+        tar -czf cilium-linux-arm64.tar.gz -C ./cilium-cli/cmd cilium
         sha256sum cilium-linux-arm64.tar.gz > cilium-linux-arm64.tar.gz.sha256sum
 
     # Step 10: Verify Artifacts
