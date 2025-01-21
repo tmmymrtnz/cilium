@@ -3,7 +3,7 @@ name: Build and Release Cilium
 on:
   push:
     branches:
-      - main  # Trigger on pushes to the main branch
+      - main
 
 jobs:
   build-and-release:
@@ -15,63 +15,57 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v3
       with:
-        fetch-depth: 0  # Ensure full history for any Git-related operations
+        fetch-depth: 0
 
     # Step 2: Fix go.mod
     - name: Fix go.mod
       run: |
         sed -i 's/go 1.23.0/go 1.23/' go.mod
-        cat go.mod  # Verify the corrected Go version
+        cat go.mod
 
     # Step 3: Set up Go
     - name: Set Up Go
       uses: actions/setup-go@v4
       with:
-        go-version: 1.23  # Ensure the correct Go version is installed
+        go-version: 1.23
 
     # Step 4: Install Dependencies
     - name: Install Build Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y clang llvm make gcc bpfcc-tools
+        sudo apt-get install -y clang llvm make gcc bpfcc-tools libelf-dev
 
-    # Step 5: Clean Previous Builds
-    - name: Clean Previous Builds
+    # Step 5: Debug Build Process
+    - name: Build Cilium with Debug Logs
       run: |
         make clean
-        for i in cilium-dbg daemon cilium-health bugtool operator plugins tools hubble-relay bpf clustermesh-apiserver; do
-          make -C $i clean || true
-        done
+        GOARCH=amd64 make VERBOSE=1
 
-    # Step 6: Build for AMD64
-    - name: Build for AMD64
+    # Step 6: Verify Binary Location
+    - name: Verify Binary Location
       run: |
-        make clean
-        GOARCH=amd64 make
-        if [ ! -f ./cilium ]; then
-          echo "Cilium binary not found for AMD64!"
+        if [ ! -f ./bin/cilium ]; then
+          echo "Cilium binary not found in ./bin!"
           exit 1
         fi
-        tar -czf cilium-linux-amd64.tar.gz cilium
+
+    # Step 7: Package Binary for AMD64
+    - name: Package Cilium for AMD64
+      run: |
+        tar -czf cilium-linux-amd64.tar.gz -C ./bin cilium
         sha256sum cilium-linux-amd64.tar.gz > cilium-linux-amd64.tar.gz.sha256sum
 
-    # Step 7: Build for ARM64
+    # Step 8: Build for ARM64
     - name: Build for ARM64
       run: |
         make clean
-        GOARCH=arm64 make
-        if [ ! -f ./cilium ]; then
+        GOARCH=arm64 make VERBOSE=1
+        if [ ! -f ./bin/cilium ]; then
           echo "Cilium binary not found for ARM64!"
           exit 1
         fi
-        tar -czf cilium-linux-arm64.tar.gz cilium
+        tar -czf cilium-linux-arm64.tar.gz -C ./bin cilium
         sha256sum cilium-linux-arm64.tar.gz > cilium-linux-arm64.tar.gz.sha256sum
-
-    # Step 8: Verify Artifacts
-    - name: Verify Generated Artifacts
-      run: |
-        ls -lh cilium-linux-*.tar.gz
-        ls -lh cilium-linux-*.sha256sum
 
     # Step 9: Create GitHub Release
     - name: Create GitHub Release
