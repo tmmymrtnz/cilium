@@ -11,81 +11,87 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    # Step 1: Check out the repository
     - name: Checkout Code
       uses: actions/checkout@v3
       with:
         fetch-depth: 0
 
+    # Step 2: Fix go.mod
     - name: Fix go.mod
       run: |
-        sed -i 's/go 1.23.0/go 1.20/' go.mod
+        sed -i 's/go 1.23.0/go 1.23/' go.mod
         cat go.mod
 
-    - name: Install Build Dependencies for AMD64
+    # Step 3: Set up Go
+    - name: Set Up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: 1.23
+
+    # Step 4: Install Build Dependencies
+    - name: Install Build Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y clang llvm make gcc bpfcc-tools libelf-dev git
+        sudo apt-get install -y clang llvm make gcc bpfcc-tools libelf-dev
 
-    - name: Build Cilium for AMD64
+    # Step 5: Build Cilium for ARM64
+    - name: Build Cilium for ARM64
       run: |
-        echo "Building Cilium for AMD64..."
+        echo "Building Cilium for ARM64 using Go cross-compilation..."
         make clean
-        NO_PRECHECK=1 GOARCH=amd64 make VERBOSE=1 || { echo "Build failed for AMD64!"; exit 1; }
+        NO_PRECHECK=1 GOOS=linux GOARCH=arm64 make VERBOSE=1 || { echo "Build failed for ARM64!"; exit 1; }
 
-    - name: Locate and Package Cilium for AMD64
-      run: |
-        CILIUM_BINARY=$(find . -name cilium -type f | head -n 1)
-        if [ -z "$CILIUM_BINARY" ]; then
-          echo "Cilium binary not found for AMD64!"
-          exit 1
-        fi
-        tar -czf cilium-linux-amd64.tar.gz -C $(dirname "$CILIUM_BINARY") $(basename "$CILIUM_BINARY")
-        sha256sum cilium-linux-amd64.tar.gz > cilium-linux-amd64.tar.gz.sha256sum
-
-    - name: Setup QEMU for ARM64 Emulation
-      uses: docker/setup-qemu-action@v2
-      with:
-        platforms: linux/arm64
-
-    - name: Build Cilium for ARM64 in Docker
-      run: |
-        echo "Building Cilium for ARM64 in Docker..."
-        docker run --rm --privileged -v $(pwd):/workspace -w /workspace --platform linux/arm64 \
-          ubuntu:22.04 bash -c "
-          apt-get update && \
-          apt-get install -y clang llvm make gcc bpfcc-tools libelf-dev git wget curl && \
-          wget https://go.dev/dl/go1.20.6.linux-arm64.tar.gz && \
-          tar -C /usr/local -xzf go1.20.6.linux-arm64.tar.gz && \
-          export PATH=/usr/local/go/bin:\$PATH && \
-          go version && \
-          make clean && \
-          NO_PRECHECK=1 GOARCH=arm64 make VERBOSE=1 || exit 1
-        "
-
+    # Step 6: Locate and Package Cilium for ARM64
     - name: Locate and Package Cilium for ARM64
       run: |
+        echo "Locating Cilium binary for ARM64..."
         CILIUM_BINARY=$(find . -name cilium -type f | head -n 1)
         if [ -z "$CILIUM_BINARY" ]; then
           echo "Cilium binary not found for ARM64!"
           exit 1
         fi
+        echo "Packaging Cilium binary found at: $CILIUM_BINARY"
         tar -czf cilium-linux-arm64.tar.gz -C $(dirname "$CILIUM_BINARY") $(basename "$CILIUM_BINARY")
         sha256sum cilium-linux-arm64.tar.gz > cilium-linux-arm64.tar.gz.sha256sum
 
+    # Step 7: Build Cilium for AMD64
+    - name: Build Cilium for AMD64
+      run: |
+        echo "Building Cilium for AMD64..."
+        make clean
+        NO_PRECHECK=1 GOOS=linux GOARCH=amd64 make VERBOSE=1 || { echo "Build failed for AMD64!"; exit 1; }
+
+    # Step 8: Locate and Package Cilium for AMD64
+    - name: Locate and Package Cilium for AMD64
+      run: |
+        echo "Locating Cilium binary for AMD64..."
+        CILIUM_BINARY=$(find . -name cilium -type f | head -n 1)
+        if [ -z "$CILIUM_BINARY" ]; then
+          echo "Cilium binary not found for AMD64!"
+          exit 1
+        fi
+        echo "Packaging Cilium binary found at: $CILIUM_BINARY"
+        tar -czf cilium-linux-amd64.tar.gz -C $(dirname "$CILIUM_BINARY") $(basename "$CILIUM_BINARY")
+        sha256sum cilium-linux-amd64.tar.gz > cilium-linux-amd64.tar.gz.sha256sum
+
+    # Step 9: Verify Generated Artifacts
     - name: Verify Generated Artifacts
       run: |
+        echo "Verifying generated artifacts..."
         ls -lh cilium-linux-*.tar.gz
         ls -lh cilium-linux-*.sha256sum
 
+    # Step 10: Create GitHub Release
     - name: Create GitHub Release
       uses: ncipollo/release-action@v1
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: |
-          cilium-linux-amd64.tar.gz
-          cilium-linux-amd64.tar.gz.sha256sum
           cilium-linux-arm64.tar.gz
           cilium-linux-arm64.tar.gz.sha256sum
+          cilium-linux-amd64.tar.gz
+          cilium-linux-amd64.tar.gz.sha256sum
         tag: v${{ github.run_number }}
         releaseName: "Automated Release v${{ github.run_number }}"
         generateReleaseNotes: true
