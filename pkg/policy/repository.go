@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"sync/atomic"
+	"github.com/sirupsen/logrus"
 
 	cilium "github.com/cilium/proxy/go/cilium/api"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -71,16 +72,25 @@ type policyContext struct {
 
 // GetNamespace() returns the namespace for the policy rule being resolved
 func (p *policyContext) GetNamespace() string {
+	logrus.WithFields(logrus.Fields{
+		"func":  "GetNamespace",
+	}).Info("On file repository.go")
 	return p.ns
 }
 
 // GetSelectorCache() returns the selector cache used by the Repository
 func (p *policyContext) GetSelectorCache() *SelectorCache {
+	logrus.WithFields(logrus.Fields{
+		"func":  "GetSelectorCache",
+	}).Info("On file repository.go")
 	return p.repo.GetSelectorCache()
 }
 
 // GetTLSContext() returns data for TLS Context via a CertificateManager
 func (p *policyContext) GetTLSContext(tls *api.TLSContext) (ca, public, private string, inlineSecrets bool, err error) {
+	logrus.WithFields(logrus.Fields{
+		"func":  "GetTLSContext",
+	}).Info("On file repository.go")
 	if p.repo.certManager == nil {
 		return "", "", "", false, fmt.Errorf("No Certificate Manager set on Policy Repository")
 	}
@@ -198,6 +208,9 @@ func NewPolicyRepository(
 	idmgr identitymanager.IDManager,
 	metricsManager api.PolicyMetrics,
 ) *Repository {
+	logrus.WithFields(logrus.Fields{
+		"func":  "NewPolicyRepository",
+	}).Info("On file repository.go")
 	selectorCache := NewSelectorCache(initialIDs)
 	repo := &Repository{
 		rules:            make(map[ruleKey]*rule),
@@ -234,6 +247,10 @@ type traceState struct {
 }
 
 func (state *traceState) trace(rules int, ctx *SearchContext) {
+	logrus.WithFields(logrus.Fields{
+		"func":  "trace",
+		"rules": rules,
+	}).Info("On file repository.go")
 	ctx.PolicyTrace("%d/%d rules selected\n", state.selectedRules, rules)
 	if state.constrainedRules > 0 {
 		ctx.PolicyTrace("Found unsatisfied FromRequires constraint\n")

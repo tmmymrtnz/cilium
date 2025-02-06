@@ -193,6 +193,10 @@ type Daemon struct {
 
 // GetPolicyRepository returns the policy repository of the daemon
 func (d *Daemon) GetPolicyRepository() policy.PolicyRepository {
+	logrus.WithFields(logrus.Fields{
+		"policy": d.policy,
+		"func":   "GetPolicyRepository",
+	}).Info("On file daemon.go")
 	return d.policy
 }
 
@@ -283,6 +287,11 @@ func removeOldCiliumHostIPs(ctx context.Context, restoredRouterIPv4, restoredRou
 // newDaemon creates and returns a new Daemon with the parameters set in c.
 func newDaemon(ctx context.Context, cleaner *daemonCleanup, params *daemonParams) (*Daemon, *endpointRestoreState, error) {
 	var err error
+
+	logrus.WithFields(logrus.Fields{
+		"params": params,
+		"func":   "newDaemon",
+	}).Info("On file daemon.go")
 
 	bootstrapStats.daemonInit.Start()
 

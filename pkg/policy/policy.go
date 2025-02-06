@@ -11,6 +11,7 @@ import (
 
 	"github.com/cilium/cilium/api/v1/models"
 	"github.com/cilium/cilium/pkg/labels"
+	"github.com/sirupsen/logrus"
 )
 
 type Tracing int
@@ -29,6 +30,9 @@ func (s *SearchContext) TraceEnabled() bool {
 // PolicyTrace logs the given message into the SearchContext logger only if
 // TRACE_ENABLED or TRACE_VERBOSE is enabled in the receiver's SearchContext.
 func (s *SearchContext) PolicyTrace(format string, a ...interface{}) {
+	logrus.WithFields(logrus.Fields{
+		"func":  "PolicyTrace",
+	}).Info("On file policy.go")
 	if s.TraceEnabled() {
 		log.Debugf(format, a...)
 		if s.Logging != nil {
@@ -42,6 +46,9 @@ func (s *SearchContext) PolicyTrace(format string, a ...interface{}) {
 // PolicyTraceVerbose logs the given message into the SearchContext logger only
 // if TRACE_VERBOSE is enabled in the receiver's SearchContext.
 func (s *SearchContext) PolicyTraceVerbose(format string, a ...interface{}) {
+	logrus.WithFields(logrus.Fields{
+		"func":  "PolicyTraceVerbose",
+	}).Info("On file policy.go")
 	switch s.Trace {
 	case TRACE_VERBOSE:
 		log.Debugf(format, a...)

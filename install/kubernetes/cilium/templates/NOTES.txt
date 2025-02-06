@@ -24,6 +24,6 @@ WARNINGS:
 {{ $warnings }}
 {{- end }}
 
-Your release version is {{ .Chart.Version }}.
+Your release version is {{ .Chart.Version }} CUSTOM.
 
 For any further help, visit https://docs.cilium.io/en/v{{ (semver .Chart.Version).Major }}.{{ (semver .Chart.Version).Minor }}/gettinghelp
