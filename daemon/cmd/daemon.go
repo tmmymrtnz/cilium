@@ -288,11 +288,6 @@ func removeOldCiliumHostIPs(ctx context.Context, restoredRouterIPv4, restoredRou
 func newDaemon(ctx context.Context, cleaner *daemonCleanup, params *daemonParams) (*Daemon, *endpointRestoreState, error) {
 	var err error
 
-	logrus.WithFields(logrus.Fields{
-		"params": params,
-		"func":   "newDaemon",
-	}).Info("On file daemon.go")
-
 	bootstrapStats.daemonInit.Start()
 
 	// EncryptedOverlay feature must check the TunnelProtocol if enabled, since
@@ -878,6 +873,13 @@ func newDaemon(ctx context.Context, cleaner *daemonCleanup, params *daemonParams
 	if err := params.IPsecKeyCustodian.StartBackgroundJobs(params.NodeHandler); err != nil {
 		log.WithError(err).Error("Unable to start IPsec key watcher")
 	}
+
+	fmt.Println("Daemon is running TOMMY CUSTOM")
+
+	logrus.WithFields(logrus.Fields{
+		"version": "tmmymrtnz-custom",
+		"location": "newDaemon()",
+	}).Info("Running custom Cilium Agent - Version: tmmymrtnz-custom")
 
 	return &d, restoredEndpoints, nil
 }
