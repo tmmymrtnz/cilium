@@ -90,7 +90,7 @@ type K8sServiceWatcher struct {
 }
 
 func (k *K8sServiceWatcher) servicesInit() {
-	log.withFields(logrus.Fields{
+	log.WithFields(logrus.Fields{
 		"functionName": "servicesInit",
 		"fileName":     "service.go",
 	}).Debug("Initializing services")
@@ -155,7 +155,7 @@ func (k *K8sServiceWatcher) serviceEventLoop(synced *atomic.Bool, swg *lock.Stop
 }
 
 func (k *K8sServiceWatcher) upsertK8sServiceV1(svc *slim_corev1.Service, swg *lock.StoppableWaitGroup) {
-	log.withFields(logrus.Fields{
+	log.WithFields(logrus.Fields{
 		"functionName": "upsertK8sServiceV1",
 		"fileName":     "service.go",
 	}).Debug("Upserting k8s service")
@@ -666,7 +666,7 @@ func (k *K8sServiceWatcher) k8sServiceEventProcessed(action string, startTime ti
 		"functionName": "k8sServiceEventProcessed",
 		"fileName":     "service.go",
 	}).Debug("Processing k8s service event")
-	
+
 	duration, _ := safetime.TimeSinceSafe(startTime, log)
 	metrics.ServiceImplementationDelay.WithLabelValues(action).Observe(duration.Seconds())
 }
