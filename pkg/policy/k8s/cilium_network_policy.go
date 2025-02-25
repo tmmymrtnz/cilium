@@ -227,7 +227,7 @@ func (p *policyWatcher) registerResourceWithSyncFn(ctx context.Context, resource
 // reportCNPChangeMetrics generates metrics for changes (Add, Update, Delete) to
 // Cilium Network Policies depending on the operation's success.
 func reportCNPChangeMetrics(err error) {
-	log.WithFields(logrus.Fields{
+	logrus.WithFields(logrus.Fields{
 		"functionName": "reportCNPChangeMetrics",
 		"fileName":     "cilium_network_policy.go",
 	}).Debug("Reporting CiliumNetworkPolicy change metrics")
@@ -239,7 +239,7 @@ func reportCNPChangeMetrics(err error) {
 }
 
 func resourceIDForCiliumNetworkPolicy(key resource.Key, cnp *types.SlimCNP) ipcacheTypes.ResourceID {
-	log.WithFields(logrus.Fields{
+	logrus.WithFields(logrus.Fields{
 		"functionName": "resourceIDForCiliumNetworkPolicy",
 		"fileName":     "cilium_network_policy.go",
 	}).Debug("Creating ResourceID for CiliumNetworkPolicy")
