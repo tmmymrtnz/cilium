@@ -73,6 +73,11 @@ var (
 )
 
 func init() {
+	log.WithFields(logrus.Fields{
+		"functionName": "init",
+		"fileName":     "bpf.go",
+	}).Debug("Initializing allTrafficKeys")
+
 	for _, proto := range policyapi.SupportedProtocols() {
 		p := u8proto.ProtoIDs[strings.ToLower(string(proto))]
 		allTrafficKeys = append(allTrafficKeys,
@@ -84,17 +89,32 @@ func init() {
 
 // policyMapPath returns the path to the policy map of endpoint.
 func (e *Endpoint) policyMapPath() string {
+	log.withFields(logrus.Fields{
+		"functionName": "policyMapPath",
+		"fileName":     "bpf.go",
+	}).Debug("Getting policy map path")
+
 	return bpf.LocalMapPath(policymap.MapName, e.ID)
 }
 
 // callsMapPath returns the path to cilium tail calls map of an endpoint.
 func (e *Endpoint) callsMapPath() string {
+	log.WithFields(logrus.Fields{
+		"functionName": "callsMapPath",
+		"fileName":     "bpf.go",
+	}).Debug("Getting calls map path")
+
 	return e.owner.Loader().CallsMapPath(e.ID)
 }
 
 // callsCustomMapPath returns the path to cilium custom tail calls map of an
 // endpoint.
 func (e *Endpoint) customCallsMapPath() string {
+	log.WithFields(logrus.Fields{
+		"functionName": "customCallsMapPath",
+		"fileName":     "bpf.go",
+	}).Debug("Getting custom calls map path")
+
 	return e.owner.Loader().CustomCallsMapPath(e.ID)
 }
 
@@ -106,6 +126,11 @@ func (e *Endpoint) customCallsMapPath() string {
 //
 // e.mutex must be RLock()ed
 func (e *Endpoint) writeInformationalComments(w io.Writer) error {
+	log.WithFields(logrus.Fields{
+		"functionName": "writeInformationalComments",
+		"fileName":     "bpf.go",
+	}).Debug("Writing informational comments")
+
 	fw := bufio.NewWriter(w)
 
 	fmt.Fprint(fw, "/*\n")
@@ -172,6 +197,11 @@ func (e *Endpoint) writeInformationalComments(w io.Writer) error {
 //
 // e.mutex must be write-locked.
 func (e *Endpoint) writeHeaderfile(prefix string) error {
+	log.WithFields(logrus.Fields{
+		"functionName": "writeHeaderfile",
+		"fileName":     "bpf.go",
+	}).Debug("Writing header file")
+
 	headerPath := filepath.Join(prefix, common.CHeaderFileName)
 	e.getLogger().WithFields(logrus.Fields{
 		logfields.Path: headerPath,
@@ -236,22 +266,42 @@ type proxyPolicy struct {
 
 // newProxyPolicy returns a new instance of proxyPolicy by value
 func newProxyPolicy(l4 *policy.L4Filter, listener string, port uint16, proto u8proto.U8proto) proxyPolicy {
+	log.WithFields(logrus.Fields{
+		"functionName": "newProxyPolicy",
+		"fileName":     "bpf.go",
+	}).Debug("Creating new proxy policy")
+
 	return proxyPolicy{L4Filter: l4, listener: listener, port: port, protocol: proto}
 }
 
 // GetPort returns the destination port number on which the proxy policy applies
 // This version properly returns the port resolved from a named port, if any.
 func (p *proxyPolicy) GetPort() uint16 {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetPort",
+		"fileName":     "bpf.go",
+	}).Debug("Getting port")
+
 	return p.port
 }
 
 // GetProtocol returns the destination protocol number on which the proxy policy applies
 func (p *proxyPolicy) GetProtocol() u8proto.U8proto {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetProtocol",
+		"fileName":     "bpf.go",
+	}).Debug("Getting protocol")
+
 	return p.protocol
 }
 
 // GetListener returns the listener name referenced by the policy, if any
 func (p *proxyPolicy) GetListener() string {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetListener",
+		"fileName":     "bpf.go",
+	}).Debug("Getting listener")
+
 	return p.listener
 }
 
@@ -260,6 +310,11 @@ func (p *proxyPolicy) GetListener() string {
 // required to implement the given L4 policy.
 // Only called after a new selector policy has been computed.
 func (e *Endpoint) addNewRedirects(selectorPolicy policy.SelectorPolicy, proxyWaitGroup *completion.WaitGroup) (desiredRedirects map[string]uint16, rf revert.RevertFunc) {
+	log.WithFields(logrus.Fields{
+		"functionName": "addNewRedirects",
+		"fileName":     "bpf.go",
+	}).Debug("Adding new redirects")
+
 	if e.isProperty(PropertyFakeEndpoint) || e.IsProxyDisabled() {
 		return nil, nil
 	}
@@ -334,6 +389,11 @@ func (e *Endpoint) addNewRedirects(selectorPolicy policy.SelectorPolicy, proxyWa
 // Must be called with endpoint.mutex locked for writing, as this calls back to
 // 'e.OnDNSPolicyUpdateLocked()'.
 func (e *Endpoint) removeOldRedirects(desiredRedirects, realizedRedirects map[string]uint16) {
+	log.WithFields(logrus.Fields{
+		"functionName": "removeOldRedirects",
+		"fileName":     "bpf.go",
+	}).Debug("Removing old redirects")
+
 	if e.isProperty(PropertyFakeEndpoint) || e.IsProxyDisabled() {
 		return
 	}
@@ -374,6 +434,11 @@ func (e *Endpoint) removeOldRedirects(desiredRedirects, realizedRedirects map[st
 // Whether the new state dir is populated with all new BPF state files,
 // and an error if something failed.
 func (e *Endpoint) regenerateBPF(regenContext *regenerationContext) (revnum uint64, reterr error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "regenerateBPF",
+		"fileName":     "bpf.go",
+	}).Debug("Regenerating BPF")
+
 	var err error
 
 	stats := &regenContext.Stats
@@ -520,6 +585,11 @@ func (e *Endpoint) regenerateBPF(regenContext *regenerationContext) (revnum uint
 // Sync is done against 'policyMapDump' if non-empty, otherwise it is done against e.realizedPolicy
 // e.mutex must be held!
 func (e *Endpoint) policyMapSync(policyMapDump policy.MapStateMap, stats *regenerationStatistics) (err error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "policyMapSync",
+		"fileName":     "bpf.go",
+	}).Debug("Syncing policy map")
+
 	stats.mapSync.Start()
 	// Nothing to do if the desired policy is already fully realized.
 	if e.realizedPolicy != e.desiredPolicy {
@@ -534,6 +604,11 @@ func (e *Endpoint) policyMapSync(policyMapDump policy.MapStateMap, stats *regene
 }
 
 func (e *Endpoint) realizeBPFState(regenContext *regenerationContext) (err error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "realizeBPFState",
+		"fileName":     "bpf.go",
+	}).Debug("Realizing BPF state")
+
 	stats := &regenContext.Stats
 	datapathRegenCtxt := regenContext.datapathRegenerationContext
 	debugEnabled := logging.CanLogAt(e.getLogger().Logger, logrus.DebugLevel)
@@ -579,6 +654,11 @@ func (e *Endpoint) realizeBPFState(regenContext *regenerationContext) (err error
 //
 // Returns whether the headerfile changed and/or an error.
 func (e *Endpoint) runPreCompilationSteps(regenContext *regenerationContext) (preCompilationError error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "runPreCompilationSteps",
+		"fileName":     "bpf.go",
+	}).Debug("Running pre-compilation steps")
+
 	stats := &regenContext.Stats
 	datapathRegenCtxt := regenContext.datapathRegenerationContext
 
@@ -777,6 +857,11 @@ func (e *Endpoint) runPreCompilationSteps(regenContext *regenerationContext) (pr
 }
 
 func (e *Endpoint) finalizeProxyState(regenContext *regenerationContext, err error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "finalizeProxyState",
+		"fileName":     "bpf.go",
+	}).Debug("Finalizing proxy state")
+
 	datapathRegenCtx := regenContext.datapathRegenerationContext
 	if err == nil {
 		// Always execute the finalization code, even if the endpoint is
@@ -801,6 +886,11 @@ func (e *Endpoint) finalizeProxyState(regenContext *regenerationContext, err err
 
 // InitMap creates the policy map in the kernel.
 func (e *Endpoint) InitMap() error {
+	log.WithFields(logrus.Fields{
+		"functionName": "InitMap",
+		"fileName":     "bpf.go",
+	}).Debug("Initializing map")
+
 	return policymap.Create(e.policyMapPath())
 }
 
@@ -810,6 +900,11 @@ func (e *Endpoint) InitMap() error {
 //
 // Call this after the endpoint's tc hook has been detached.
 func (e *Endpoint) deleteMaps() []error {
+	log.WithFields(logrus.Fields{
+		"functionName": "deleteMaps",
+		"fileName":     "bpf.go",
+	}).Debug("Deleting maps")
+
 	var errors []error
 
 	// Remove the endpoint from cilium_lxc. After this point, ip->epID lookups
@@ -870,6 +965,11 @@ func (e *Endpoint) deleteMaps() []error {
 //
 // The endpoint lock must be held
 func (e *Endpoint) garbageCollectConntrack(filter ctmap.GCFilter) {
+	log.WithFields(logrus.Fields{
+		"functionName": "garbageCollectConntrack",
+		"fileName":     "bpf.go",
+	}).Debug("Garbage collecting conntrack")
+
 	var maps []*ctmap.Map
 
 	if e.ConntrackLocalLocked() {
@@ -936,6 +1036,11 @@ type policyMapPressureUpdater interface {
 
 func (e *Endpoint) updatePolicyMapPressureMetric(add float64) {
 	// We want to use desiredPolicy, but it can be nil.
+	log.WithFields(logrus.Fields{
+		"functionName": "updatePolicyMapPressureMetric",
+		"fileName":     "bpf.go",
+	}).Debug("Updating policy map pressure metric")
+
 	policyLen := add
 	if e.desiredPolicy != nil {
 		policyLen += float64(e.desiredPolicy.Len())
@@ -948,6 +1053,11 @@ func (e *Endpoint) updatePolicyMapPressureMetric(add float64) {
 }
 
 func (e *Endpoint) deletePolicyKeys(deletes, adds policy.Keys) int {
+	log.WithFields(logrus.Fields{
+		"functionName": "deletePolicyKeys",
+		"fileName":     "bpf.go",
+	}).Debug("Deleting policy keys")
+
 	var errors int
 	for k := range deletes {
 		if _, ok := adds[k]; !ok {
@@ -961,6 +1071,11 @@ func (e *Endpoint) deletePolicyKeys(deletes, adds policy.Keys) int {
 
 func (e *Endpoint) deletePolicyKey(keyToDelete policy.Key) bool {
 	// Convert from policy.Key to policymap.Key
+	log.WithFields(logrus.Fields{
+		"functionName": "deletePolicyKey",
+		"fileName":     "bpf.go",
+	}).Debug("Deleting policy key")
+
 	policymapKey := policymap.NewKey(keyToDelete.TrafficDirection(), keyToDelete.Identity, keyToDelete.Nexthdr, keyToDelete.DestPort, keyToDelete.PortPrefixLen())
 
 	// Do not error out if the map entry was already deleted from the bpf map.
@@ -987,6 +1102,11 @@ func (e *Endpoint) deletePolicyKey(keyToDelete policy.Key) bool {
 }
 
 func (e *Endpoint) addPolicyKeys(adds policy.Keys) int {
+	log.WithFields(logrus.Fields{
+		"functionName": "addPolicyKeys",
+		"fileName":     "bpf.go",
+	}).Debug("Adding policy keys")
+
 	var errors int
 	for keyToAdd := range adds {
 		entry, exists := e.desiredPolicy.Get(keyToAdd)
@@ -1007,6 +1127,11 @@ func (e *Endpoint) addPolicyKeys(adds policy.Keys) int {
 
 func (e *Endpoint) addPolicyKey(keyToAdd policy.Key, entry policy.MapStateEntry) bool {
 	// Convert from policy.Key to policymap.Key
+	log.WithFields(logrus.Fields{
+		"functionName": "addPolicyKey",
+		"fileName":     "bpf.go",
+	}).Debug("Adding policy key")
+
 	policymapKey := policymap.NewKey(keyToAdd.TrafficDirection(), keyToAdd.Identity, keyToAdd.Nexthdr, keyToAdd.DestPort, keyToAdd.PortPrefixLen())
 
 	var err error
@@ -1037,6 +1162,11 @@ func (e *Endpoint) addPolicyKey(keyToAdd policy.Key, entry policy.MapStateEntry)
 // identities added / deleted).
 // 'proxyWaitGroup' may not be nil.
 func (e *Endpoint) ApplyPolicyMapChanges(proxyWaitGroup *completion.WaitGroup) error {
+	log.WithFields(logrus.Fields{
+		"functionName": "ApplyPolicyMapChanges",
+		"fileName":     "bpf.go",
+	}).Debug("Applying policy map changes")
+
 	if err := e.lockAlive(); err != nil {
 		return err
 	}
@@ -1056,6 +1186,11 @@ func (e *Endpoint) ApplyPolicyMapChanges(proxyWaitGroup *completion.WaitGroup) e
 // updated if needed. Endpoint must be locked. It returns one special error
 // that must be considered, "ErrPolicyEntryMaxExceeded".
 func (e *Endpoint) applyPolicyMapChangesLocked(regenContext *regenerationContext, hasNewPolicy bool) error {
+	log.WithFields(logrus.Fields{
+		"functionName": "applyPolicyMapChangesLocked",
+		"fileName":     "bpf.go",
+	}).Debug("Applying policy map changes locked")
+
 	e.PolicyDebug(nil, "applyPolicyMapChanges")
 
 	// Always update Envoy if policy has changed
@@ -1205,6 +1340,11 @@ func (e *Endpoint) shouldLockdownLocked(changeSize int) bool {
 func (e *Endpoint) startLockdownLocked(changeSize int) error {
 	// We only need to go through the mechanics of
 	// lockdown once.
+	log.WithFields(logrus.Fields{
+		"functionName": "startLockdownLocked",
+		"fileName":     "bpf.go",
+	}).Debug("Starting lockdown locked")
+
 	if !e.lockdown {
 		// Do nothing if lockdown mode is not enabled.
 		if !option.Config.EnableEndpointLockdownOnPolicyOverflow {
@@ -1233,6 +1373,11 @@ func (e *Endpoint) startLockdownLocked(changeSize int) error {
 // is in lockdown. It returns true if it did stop a lockdown and
 // false if it did not.
 func (e *Endpoint) stopLockdownLocked() bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "stopLockdownLocked",
+		"fileName":     "bpf.go",
+	}).Debug("Stopping lockdown locked")
+
 	if e.lockdown {
 		e.forcePolicyCompute = true
 		e.lockdown = false
@@ -1245,6 +1390,11 @@ func (e *Endpoint) stopLockdownLocked() bool {
 // mode. The bpf policy map is populated with deny all traffic entries,
 // and all other entries are deleted.
 func (e *Endpoint) endpointPolicyLockdown() error {
+	log.WithFields(logrus.Fields{
+		"functionName": "endpointPolicyLockdown",
+		"fileName":     "bpf.go",
+	}).Debug("Endpoint policy lockdown")
+
 	denyMap := make(map[policymap.PolicyKey]struct{}, len(allTrafficKeys))
 	for _, k := range allTrafficKeys {
 		denyMap[policymap.NewKey(k.TrafficDirection(), k.Identity, k.Nexthdr, k.DestPort, k.PortPrefixLen())] = struct{}{}
@@ -1303,6 +1453,11 @@ func (e *Endpoint) endpointPolicyLockdown() error {
 // dumping the bpf policy map.
 // Only called when desired and realized policies are not the same.
 func (e *Endpoint) syncPolicyMap() error {
+	log.WithFields(logrus.Fields{
+		"functionName": "syncPolicyMap",
+		"fileName":     "bpf.go",
+	}).Debug("Syncing policy map")
+
 	addErrors, deleteErrors := 0, 0
 
 	if e.shouldLockdownLocked(0) {
@@ -1348,6 +1503,11 @@ func (e *Endpoint) syncPolicyMap() error {
 // difference between a realized MapStateMap from a recent policy map dump
 // and desired policy state.
 func (e *Endpoint) syncPolicyMapWith(realized policy.MapStateMap, withDiffs bool) (diffCount int, diffs []policy.MapChange, err error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "syncPolicyMapWith",
+		"fileName":     "bpf.go",
+	}).Debug("Syncing policy map with")
+
 	addErrors, deleteErrors := 0, 0
 
 	if e.shouldLockdownLocked(0) {
@@ -1426,6 +1586,11 @@ func (e *Endpoint) syncPolicyMapWith(realized policy.MapStateMap, withDiffs bool
 // dumpPolicyMapToMapStateMap dumps the current bpf policy map for this endpoint
 // into a MapStateMap.
 func (e *Endpoint) dumpPolicyMapToMapStateMap() (policy.MapStateMap, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "dumpPolicyMapToMapStateMap",
+		"fileName":     "bpf.go",
+	}).Debug("Dumping policy map to map state map")
+
 	currentMap := make(policy.MapStateMap)
 
 	cb := func(key bpf.MapKey, value bpf.MapValue) {
@@ -1463,6 +1628,11 @@ func (e *Endpoint) dumpPolicyMapToMapStateMap() (policy.MapStateMap, error) {
 // or any update operation to the map fails.
 // Must be called with e.mutex Lock()ed.
 func (e *Endpoint) syncPolicyMapWithDump() error {
+	log.WithFields(logrus.Fields{
+		"functionName": "syncPolicyMapWithDump",
+		"fileName":     "bpf.go",
+	}).Debug("Syncing policy map with dump")
+
 	if e.policyMap == nil {
 		return fmt.Errorf("not syncing PolicyMap state for endpoint because PolicyMap is nil")
 	}
@@ -1515,6 +1685,11 @@ func (e *Endpoint) syncPolicyMapWithDump() error {
 
 func (e *Endpoint) startSyncPolicyMapController() {
 	// Skip the controller if the endpoint has no policy map
+	log.WithFields(logrus.Fields{
+		"functionName": "startSyncPolicyMapController",
+		"fileName":     "bpf.go",
+	}).Debug("Starting sync policy map controller")
+
 	if e.isProperty(PropertySkipBPFPolicy) {
 		return
 	}
@@ -1548,18 +1723,33 @@ func (e *Endpoint) startSyncPolicyMapController() {
 // RequireARPPassthrough returns true if the datapath must implement ARP
 // passthrough for this endpoint
 func (e *Endpoint) RequireARPPassthrough() bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "RequireARPPassthrough",
+		"fileName":     "bpf.go",
+	}).Debug("Requiring ARP passthrough")
+
 	return e.DatapathConfiguration.RequireArpPassthrough
 }
 
 // RequireEgressProg returns true if the endpoint requires bpf_lxc with section
 // "to-container" to be attached at egress on the host facing veth pair
 func (e *Endpoint) RequireEgressProg() bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "RequireEgressProg",
+		"fileName":     "bpf.go",
+	}).Debug("Requiring egress prog")
+
 	return e.DatapathConfiguration.RequireEgressProg
 }
 
 // RequireRouting returns true if the endpoint requires BPF routing to be
 // enabled, when disabled, routing is delegated to Linux routing
 func (e *Endpoint) RequireRouting() (required bool) {
+	log.WithFields(logrus.Fields{
+		"functionName": "RequireRouting",
+		"fileName":     "bpf.go",
+	}).Debug("Requiring routing")
+
 	required = true
 	if e.DatapathConfiguration.RequireRouting != nil {
 		required = *e.DatapathConfiguration.RequireRouting
@@ -1569,6 +1759,11 @@ func (e *Endpoint) RequireRouting() (required bool) {
 
 // RequireEndpointRoute returns if the endpoint wants a per endpoint route
 func (e *Endpoint) RequireEndpointRoute() bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "RequireEndpointRoute",
+		"fileName":     "bpf.go",
+	}).Debug("Requiring endpoint route")
+
 	return e.DatapathConfiguration.InstallEndpointRoute
 }
 
@@ -1576,6 +1771,11 @@ func (e *Endpoint) RequireEndpointRoute() bool {
 // the creation of policy verdict logs. Value of VerdictLogFilter needs to be
 // consistent with how it is used in policy_verdict_filter_allow() in bpf/lib/policy_log.h
 func (e *Endpoint) GetPolicyVerdictLogFilter() uint32 {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetPolicyVerdictLogFilter",
+		"fileName":     "bpf.go",
+	}).Debug("Getting policy verdict log filter")
+
 	var filter uint32 = 0
 	if e.desiredPolicy.IngressPolicyEnabled {
 		filter = (filter | 0x1)
@@ -1590,6 +1790,11 @@ type linkCheckerFunc func(string) error
 
 // ValidateConnectorPlumbing checks whether the endpoint is correctly plumbed.
 func (e *Endpoint) ValidateConnectorPlumbing(linkChecker linkCheckerFunc) error {
+	log.WithFields(logrus.Fields{
+		"functionName": "ValidateConnectorPlumbing",
+		"fileName":     "bpf.go",
+	}).Debug("Validating connector plumbing")
+
 	if linkChecker == nil {
 		return fmt.Errorf("cannot check state of datapath; link checker is nil")
 	}
@@ -1607,6 +1812,11 @@ func CheckHealth(ep *Endpoint) error {
 	// currently: That the link has gone missing. Ignore other error to
 	// ensure that the caller doesn't unintentionally tear down the
 	// Endpoint thinking that it no longer exists.
+	log.WithFields(logrus.Fields{
+		"functionName": "CheckHealth",
+		"fileName":     "bpf.go",
+	}).Debug("Checking health")
+	
 	iface := ep.HostInterface()
 	if iface == "" {
 		handleNoHostInterfaceOnce.Do(func() {

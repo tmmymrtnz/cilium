@@ -157,6 +157,11 @@ func newWatcher(
 	k8sAPIGroups *synced.APIGroups,
 	cfg WatcherConfiguration,
 ) *K8sWatcher {
+	log.WithFields(logrus.Fields{
+		"functionName": "newWatcher",
+		"fileName":     "watcher.go",
+	}).Debug("Creating new watcher")
+
 	return &K8sWatcher{
 		resourceGroupsFn:          resourceGroups,
 		clientset:                 clientset,
@@ -181,10 +186,20 @@ func newWatcher(
 // WaitForCacheSync. For most resources this can be done by receiving from controllersStarted
 // channel (<-k.controllersStarted), which is closed after most watchers have been started.
 func (k *K8sWatcher) WaitForCacheSync(resourceNames ...string) {
+	log.WithFields(logrus.Fields{
+		"functionName": "WaitForCacheSync",
+		"fileName":     "watcher.go",
+	}).Debug("Waiting for cache sync")
+
 	k.k8sResourceSynced.WaitForCacheSync(resourceNames...)
 }
 
 func (k *K8sWatcher) GetAPIGroups() []string {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetAPIGroups",
+		"fileName":     "watcher.go",
+	}).Debug("Getting API groups")
+
 	return k.k8sAPIGroups.GetGroups()
 }
 
@@ -193,6 +208,11 @@ func (k *K8sWatcher) GetAPIGroups() []string {
 // watcher, as those resource controllers need the resources to be registered
 // with K8s first.
 func (k *K8sWatcher) WaitForCRDsToRegister(ctx context.Context) error {
+	log.WithFields(logrus.Fields{
+		"functionName": "WaitForCRDsToRegister",
+		"fileName":     "watcher.go",
+	}).Debug("Waiting for CRDs to register")
+
 	return synced.SyncCRDs(ctx, k.clientset, synced.AgentCRDResourceNames(), k.k8sResourceSynced, k.k8sAPIGroups)
 }
 
@@ -243,6 +263,11 @@ var ciliumResourceToGroupMapping = map[string]watcherInfo{
 // resourceGroups are all of the core Kubernetes and Cilium resource groups
 // which the Cilium agent watches to implement CNI functionality.
 func resourceGroups(cfg WatcherConfiguration) (resourceGroups, waitForCachesOnly []string) {
+	log.WithFields(logrus.Fields{
+		"functionName": "resourceGroups",
+		"fileName":     "watcher.go",
+	}).Debug("Getting resource groups")
+
 	k8sGroups := []string{
 		// To perform the service translation and have the BPF LB datapath
 		// with the right service -> backend (k8s endpoints) translation.
@@ -295,6 +320,11 @@ func resourceGroups(cfg WatcherConfiguration) (resourceGroups, waitForCachesOnly
 // To be called after WaitForCRDsToRegister() so that all needed CRDs have
 // already been registered.
 func (k *K8sWatcher) InitK8sSubsystem(ctx context.Context, cachesSynced chan struct{}) {
+	log.WithFields(logrus.Fields{
+		"functionName": "InitK8sSubsystem",
+		"fileName":     "watcher.go",
+	}).Debug("Initializing K8s subsystem")
+
 	resources, cachesOnly := k.resourceGroupsFn(k.cfg)
 
 	log.Info("Enabling k8s event listener")
@@ -325,6 +355,11 @@ type WatcherConfiguration interface {
 
 // enableK8sWatchers starts watchers for given resources.
 func (k *K8sWatcher) enableK8sWatchers(ctx context.Context, resourceNames []string) {
+	log.WithFields(logrus.Fields{
+		"functionName": "enableK8sWatchers",
+		"fileName":     "watcher.go",
+	}).Debug("Enabling k8s watchers")
+
 	if !k.clientset.IsEnabled() {
 		log.Debug("Not enabling k8s event listener because k8s is not enabled")
 		return
@@ -367,6 +402,11 @@ func (k *K8sWatcher) enableK8sWatchers(ctx context.Context, resourceNames []stri
 }
 
 func (k *K8sWatcher) StopWatcher() {
+	log.WithFields(logrus.Fields{
+		"functionName": "StopWatcher",
+		"fileName":     "watcher.go",
+	}).Debug("Stopping watcher")
+
 	k.k8sNamespaceWatcher.stopWatcher()
 	k.k8sServiceWatcher.stopWatcher()
 	k.k8sEndpointsWatcher.stopWatcher()
@@ -376,25 +416,50 @@ func (k *K8sWatcher) StopWatcher() {
 // K8sEventProcessed is called to do metrics accounting for each processed
 // Kubernetes event
 func (k *K8sWatcher) K8sEventProcessed(scope, action string, status bool) {
+	log.WithFields(logrus.Fields{
+		"functionName": "K8sEventProcessed",
+		"fileName":     "watcher.go",
+	}).Debug("K8s event processed")
+
 	k.k8sEventReporter.K8sEventProcessed(scope, action, status)
 }
 
 // K8sEventReceived does metric accounting for each received Kubernetes event, as well
 // as notifying of events for k8s resources synced.
 func (k *K8sWatcher) K8sEventReceived(apiResourceName, scope, action string, valid, equal bool) {
+	log.WithFields(logrus.Fields{
+		"functionName": "K8sEventReceived",
+		"fileName":     "watcher.go",
+	}).Debug("K8s event received")
+
 	k.k8sEventReporter.K8sEventReceived(apiResourceName, scope, action, valid, equal)
 }
 
 // GetCachedPod returns a pod from the local store.
 func (k *K8sWatcher) GetCachedPod(namespace, name string) (*slim_corev1.Pod, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetCachedPod",
+		"fileName":     "watcher.go",
+	}).Debug("Getting cached pod")
+
 	return k.k8sPodWatcher.GetCachedPod(namespace, name)
 }
 
 // GetCachedNamespace returns a namespace from the local store.
 func (k *K8sWatcher) GetCachedNamespace(namespace string) (*slim_corev1.Namespace, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetCachedNamespace",
+		"fileName":     "watcher.go",
+	}).Debug("Getting cached namespace")
+
 	return k.k8sNamespaceWatcher.GetCachedNamespace(namespace)
 }
 
 func (k *K8sWatcher) RunK8sServiceHandler() {
+	log.WithFields(logrus.Fields{
+		"functionName": "RunK8sServiceHandler",
+		"fileName":     "watcher.go",
+	}).Debug("Running K8s service handler")
+	
 	k.k8sServiceWatcher.RunK8sServiceHandler()
 }

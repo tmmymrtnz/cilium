@@ -52,6 +52,11 @@ type k8sServiceWatcherParams struct {
 }
 
 func newK8sServiceWatcher(params k8sServiceWatcherParams) *K8sServiceWatcher {
+	log.WithFields(logrus.Fields{
+		"functionName": "newK8sServiceWatcher",
+		"fileName":     "service.go",
+	}).Debug("Creating new K8sServiceWatcher")
+
 	return &K8sServiceWatcher{
 		k8sEventReporter:      params.K8sEventReporter,
 		k8sResourceSynced:     params.K8sResourceSynced,
@@ -85,6 +90,11 @@ type K8sServiceWatcher struct {
 }
 
 func (k *K8sServiceWatcher) servicesInit() {
+	log.withFields(logrus.Fields{
+		"functionName": "servicesInit",
+		"fileName":     "service.go",
+	}).Debug("Initializing services")
+
 	var synced atomic.Bool
 	swgSvcs := lock.NewStoppableWaitGroup()
 
@@ -100,10 +110,20 @@ func (k *K8sServiceWatcher) servicesInit() {
 }
 
 func (k *K8sServiceWatcher) stopWatcher() {
+	log.WithFields(logrus.Fields{
+		"functionName": "stopWatcher",
+		"fileName":     "service.go",
+	}).Debug("Stopping service watcher")
+
 	close(k.stop)
 }
 
 func (k *K8sServiceWatcher) serviceEventLoop(synced *atomic.Bool, swg *lock.StoppableWaitGroup) {
+	log.WithFields(logrus.Fields{
+		"functionName": "serviceEventLoop",
+		"fileName":     "service.go",
+	}).Debug("Starting service event loop")
+
 	apiGroup := resources.K8sAPIGroupServiceV1Core
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -135,6 +155,11 @@ func (k *K8sServiceWatcher) serviceEventLoop(synced *atomic.Bool, swg *lock.Stop
 }
 
 func (k *K8sServiceWatcher) upsertK8sServiceV1(svc *slim_corev1.Service, swg *lock.StoppableWaitGroup) {
+	log.withFields(logrus.Fields{
+		"functionName": "upsertK8sServiceV1",
+		"fileName":     "service.go",
+	}).Debug("Upserting k8s service")
+
 	svcID := k.k8sSvcCache.UpdateService(svc, swg)
 	if option.Config.EnableLocalRedirectPolicy {
 		if svc.Spec.Type == slim_corev1.ServiceTypeClusterIP {
@@ -146,6 +171,11 @@ func (k *K8sServiceWatcher) upsertK8sServiceV1(svc *slim_corev1.Service, swg *lo
 }
 
 func (k *K8sServiceWatcher) deleteK8sServiceV1(svc *slim_corev1.Service, swg *lock.StoppableWaitGroup) {
+	log.WithFields(logrus.Fields{
+		"functionName": "deleteK8sServiceV1",
+		"fileName":     "service.go",
+	}).Debug("Deleting k8s service")
+
 	k.k8sSvcCache.DeleteService(svc, swg)
 	svcID := k8s.ParseServiceID(svc)
 	if option.Config.EnableLocalRedirectPolicy {
@@ -156,6 +186,11 @@ func (k *K8sServiceWatcher) deleteK8sServiceV1(svc *slim_corev1.Service, swg *lo
 }
 
 func (k *K8sServiceWatcher) k8sServiceHandler() {
+	log.WithFields(logrus.Fields{
+		"functionName": "k8sServiceHandler",
+		"fileName":     "service.go",
+	}).Debug("Starting k8s service handler")
+
 	eventHandler := func(event k8s.ServiceEvent) {
 		defer func(startTime time.Time) {
 			event.SWGDone()
@@ -200,12 +235,22 @@ func (k *K8sServiceWatcher) k8sServiceHandler() {
 }
 
 func (k *K8sServiceWatcher) RunK8sServiceHandler() {
+	log.WithFields(logrus.Fields{
+		"functionName": "RunK8sServiceHandler",
+		"fileName":     "service.go",
+	}).Debug("Running k8s service handler")
+
 	go k.k8sServiceHandler()
 }
 
 func (k *K8sServiceWatcher) delK8sSVCs(svc k8s.ServiceID, svcInfo *k8s.Service) {
 	// Cleanup any headless services with a frontend IP as services may still be
 	// marked as headless if labeled with `service.kubernetes.io/headless`.
+	log.WithFields(logrus.Fields{
+		"functionName": "delK8sSVCs",
+		"fileName":     "service.go",
+	}).Debug("Deleting k8s services")
+
 	if svcInfo.IsHeadless && len(svcInfo.FrontendIPs) == 0 {
 		return
 	}
@@ -276,6 +321,11 @@ func genCartesianProduct(
 	ports map[loadbalancer.FEPortName]*loadbalancer.L4Addr,
 	bes *k8s.Endpoints,
 ) []loadbalancer.SVC {
+	log.WithFields(logrus.Fields{
+		"functionName": "genCartesianProduct",
+		"fileName":     "service.go",
+	}).Debug("Generating cartesian product")
+
 	var svcSize int
 
 	// For externalTrafficPolicy=Local xor internalTrafficPolicy=Local we
@@ -358,6 +408,11 @@ func genCartesianProduct(
 }
 
 func configureWithSourceRanges(svcType loadbalancer.SVCType) bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "configureWithSourceRanges",
+		"fileName":     "service.go",
+	}).Debug("Configuring with source ranges")
+
 	switch svcType {
 	case loadbalancer.SVCTypeLoadBalancer:
 		return true
@@ -373,6 +428,11 @@ func configureWithSourceRanges(svcType loadbalancer.SVCType) bool {
 
 // datapathSVCs returns all services that should be set in the datapath.
 func (k *K8sServiceWatcher) datapathSVCs(svc *k8s.Service, endpoints *k8s.Endpoints) ([]loadbalancer.SVC, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "datapathSVCs",
+		"fileName":     "service.go",
+	}).Debug("Getting datapath services")
+
 	svcs := []loadbalancer.SVC{}
 
 	if nodeMatches, err := k.checkServiceNodeExposure(svc); err != nil || !nodeMatches {
@@ -443,6 +503,11 @@ func (k *K8sServiceWatcher) datapathSVCs(svc *k8s.Service, endpoints *k8s.Endpoi
 // checkServiceNodeExposure returns true if the service should be installed onto the
 // local node, and false if the node should ignore and not install the service.
 func (k *K8sServiceWatcher) checkServiceNodeExposure(svc *k8s.Service) (bool, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "checkServiceNodeExposure",
+		"fileName":     "service.go",
+	}).Debug("Checking service node exposure")
+
 	if serviceAnnotationValue, serviceAnnotationExists := svc.Annotations[annotation.ServiceNodeExposure]; serviceAnnotationExists {
 		ln, err := k.localNodeStore.Get(context.Background())
 		if err != nil {
@@ -469,6 +534,11 @@ func hashSVCMap(svcs []loadbalancer.SVC) map[string]loadbalancer.L3n4Addr {
 }
 
 func stripServiceProtocol(svc *k8s.Service) *k8s.Service {
+	log.WithFields(logrus.Fields{
+		"functionName": "stripServiceProtocol",
+		"fileName":     "service.go",
+	}).Debug("Stripping service protocol")
+
 	if svc == nil {
 		return nil
 	}
@@ -489,6 +559,11 @@ func stripServiceProtocol(svc *k8s.Service) *k8s.Service {
 }
 
 func stripEndpointsProtocol(endpoints *k8s.Endpoints) *k8s.Endpoints {
+	log.WithFields(logrus.Fields{
+		"functionName": "stripEndpointsProtocol",
+		"fileName":     "service.go",
+	}).Debug("Stripping endpoints protocol")
+
 	endpoints = endpoints.DeepCopy()
 
 	for _, backend := range endpoints.Backends {
@@ -502,6 +577,11 @@ func stripEndpointsProtocol(endpoints *k8s.Endpoints) *k8s.Endpoints {
 
 func (k *K8sServiceWatcher) addK8sSVCs(svcID k8s.ServiceID, oldSvc, svc *k8s.Service, endpoints *k8s.Endpoints) {
 	// Headless services do not need any datapath implementation
+	log.WithFields(logrus.Fields{
+		"functionName": "addK8sSVCs",
+		"fileName":     "service.go",
+	}).Debug("Adding k8s services")
+
 	if svc.IsHeadless {
 		k.delK8sSVCs(svcID, svc)
 		return
@@ -582,6 +662,11 @@ func (k *K8sServiceWatcher) addK8sSVCs(svcID k8s.ServiceID, oldSvc, svc *k8s.Ser
 
 // k8sServiceEventProcessed is called to do metrics accounting the duration to program the service.
 func (k *K8sServiceWatcher) k8sServiceEventProcessed(action string, startTime time.Time) {
+	log.WithFields(logrus.Fields{
+		"functionName": "k8sServiceEventProcessed",
+		"fileName":     "service.go",
+	}).Debug("Processing k8s service event")
+	
 	duration, _ := safetime.TimeSinceSafe(startTime, log)
 	metrics.ServiceImplementationDelay.WithLabelValues(action).Observe(duration.Seconds())
 }

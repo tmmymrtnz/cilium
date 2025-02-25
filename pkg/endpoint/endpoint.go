@@ -431,6 +431,11 @@ type Endpoint struct {
 }
 
 func (e *Endpoint) GetReporter(name string) cell.Health {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetReporter",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting reporter")
+
 	if e.reporterScope == nil {
 		_, h := cell.NewSimpleHealth()
 		return h.NewScope(name)
@@ -439,6 +444,11 @@ func (e *Endpoint) GetReporter(name string) cell.Health {
 }
 
 func (e *Endpoint) InitEndpointHealth(parent cell.Health) {
+	log.WithFields(logrus.Fields{
+		"functionName": "InitEndpointHealth",
+		"fileName":     "endpoint.go",
+	}).Debug("Initializing endpoint health")
+
 	if parent == nil {
 		_, parent = cell.NewSimpleHealth()
 	}
@@ -450,6 +460,11 @@ func (e *Endpoint) InitEndpointHealth(parent cell.Health) {
 }
 
 func (e *Endpoint) Close() {
+	log.WithFields(logrus.Fields{
+		"functionName": "Close",
+		"fileName":     "endpoint.go",
+	}).Debug("Closing endpoint")
+
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
@@ -478,6 +493,11 @@ func EndpointSyncControllerName(epID uint16) string {
 
 // SetAllocator sets the identity allocator for this endpoint.
 func (e *Endpoint) SetAllocator(allocator cache.IdentityAllocator) {
+	log.WithFields(logrus.Fields{
+		"functionName": "SetAllocator",
+		"fileName":     "endpoint.go",
+	}).Debug("Setting allocator")
+
 	e.unconditionalLock()
 	defer e.unlock()
 	e.allocator = allocator
@@ -486,6 +506,11 @@ func (e *Endpoint) SetAllocator(allocator cache.IdentityAllocator) {
 // UpdateController updates the controller with the specified name with the
 // provided list of parameters in endpoint's list of controllers.
 func (e *Endpoint) UpdateController(name string, params controller.ControllerParams) {
+	log.WithFields(logrus.Fields{
+		"functionName": "UpdateController",
+		"fileName":     "endpoint.go",
+	}).Debug("Updating controller")
+
 	params.Context = e.aliveCtx
 	e.controllers.UpdateController(name, params)
 }
@@ -532,6 +557,11 @@ func (e *Endpoint) closeBPFProgramChannel() {
 // waitForProxyCompletions blocks until all proxy changes have been completed.
 // Called with buildMutex held.
 func (e *Endpoint) waitForProxyCompletions(proxyWaitGroup *completion.WaitGroup) error {
+	log.WithFields(logrus.Fields{
+		"functionName": "waitForProxyCompletions",
+		"fileName":     "endpoint.go",
+	}).Debug("Waiting for proxy completions")
+
 	if proxyWaitGroup == nil {
 		return nil
 	}
@@ -557,6 +587,11 @@ func (e *Endpoint) waitForProxyCompletions(proxyWaitGroup *completion.WaitGroup)
 //
 // Note: This function is intended for testing purposes only and should not be used in production code.
 func NewTestEndpointWithState(owner regeneration.Owner, policyGetter policyRepoGetter, namedPortsGetter namedPortsGetter, proxy EndpointProxy, allocator cache.IdentityAllocator, ctMapGC ctmap.GCRunner, ID uint16, state State) *Endpoint {
+	log.WithFields(logrus.Fields{
+		"functionName": "NewTestEndpointWithState",
+		"fileName":     "endpoint.go",
+	}).Debug("Creating new test endpoint with state")
+
 	endpointQueueName := "endpoint-" + strconv.FormatUint(uint64(ID), 10)
 	ep := createEndpoint(owner, policyGetter, namedPortsGetter, proxy, allocator, ctMapGC, ID, "")
 	ep.SetPropertyValue(PropertyFakeEndpoint, true)
@@ -571,6 +606,11 @@ func NewTestEndpointWithState(owner regeneration.Owner, policyGetter policyRepoG
 }
 
 func createEndpoint(owner regeneration.Owner, policyGetter policyRepoGetter, namedPortsGetter namedPortsGetter, proxy EndpointProxy, allocator cache.IdentityAllocator, ctMapGC ctmap.GCRunner, ID uint16, ifName string) *Endpoint {
+	log.WithFields(logrus.Fields{
+		"functionName": "createEndpoint",
+		"fileName":     "endpoint.go",
+	}).Debug("Creating endpoint")
+
 	ep := &Endpoint{
 		owner:            owner,
 		policyGetter:     policyGetter,
@@ -634,6 +674,11 @@ func (e *Endpoint) initDNSHistoryTrigger() {
 
 // CreateIngressEndpoint creates the endpoint corresponding to Cilium Ingress.
 func CreateIngressEndpoint(owner regeneration.Owner, policyGetter policyRepoGetter, namedPortsGetter namedPortsGetter, proxy EndpointProxy, allocator cache.IdentityAllocator, ctMapGC ctmap.GCRunner) (*Endpoint, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "CreateIngressEndpoint",
+		"fileName":     "endpoint.go",
+	}).Debug("Creating ingress endpoint")
+
 	ep := createEndpoint(owner, policyGetter, namedPortsGetter, proxy, allocator, ctMapGC, 0, "")
 	ep.DatapathConfiguration = NewDatapathConfiguration()
 
@@ -665,6 +710,11 @@ func CreateIngressEndpoint(owner regeneration.Owner, policyGetter policyRepoGett
 
 // CreateHostEndpoint creates the endpoint corresponding to the host.
 func CreateHostEndpoint(owner regeneration.Owner, policyGetter policyRepoGetter, namedPortsGetter namedPortsGetter, proxy EndpointProxy, allocator cache.IdentityAllocator, ctMapGC ctmap.GCRunner) (*Endpoint, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "CreateHostEndpoint",
+		"fileName":     "endpoint.go",
+	}).Debug("Creating host endpoint")
+
 	mac, err := link.GetHardwareAddr(defaults.HostDevice)
 	if err != nil {
 		return nil, err
@@ -688,6 +738,11 @@ func (e *Endpoint) GetID() uint64 {
 
 // GetLabels returns the labels.
 func (e *Endpoint) GetLabels() labels.Labels {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetLabels",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting labels")
+
 	if e.SecurityIdentity == nil {
 		return labels.Labels{}
 	}
@@ -716,11 +771,21 @@ func (e *Endpoint) GetID16() uint16 {
 // In some datapath modes, it may return an empty string as there is no unique
 // host netns network interface for this endpoint.
 func (e *Endpoint) HostInterface() string {
+	log.WithFields(logrus.Fields{
+		"functionName": "HostInterface",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting host interface")
+
 	return e.ifName
 }
 
 // GetOpLabels returns the labels as slice
 func (e *Endpoint) GetOpLabels() []string {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetOpLabels",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting op labels")
+
 	e.unconditionalRLock()
 	defer e.runlock()
 	return e.OpLabels.IdentityLabels().GetModel()
@@ -728,11 +793,21 @@ func (e *Endpoint) GetOpLabels() []string {
 
 // GetOptions returns the datapath configuration options of the endpoint.
 func (e *Endpoint) GetOptions() *option.IntOptions {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetOptions",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting options")
+
 	return e.Options
 }
 
 // GetIPv4Address returns the IPv4 address of the endpoint as a string
 func (e *Endpoint) GetIPv4Address() string {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetIPv4Address",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting IPv4 address")
+
 	if !e.IPv4.IsValid() {
 		return ""
 	}
@@ -743,6 +818,11 @@ func (e *Endpoint) GetIPv4Address() string {
 
 // GetIPv6Address returns the IPv6 address of the endpoint as a string
 func (e *Endpoint) GetIPv6Address() string {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetIPv6Address",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting IPv6 address")
+
 	if !e.IPv6.IsValid() {
 		return ""
 	}
@@ -751,16 +831,31 @@ func (e *Endpoint) GetIPv6Address() string {
 
 // IPv4Address returns the IPv4 address of the endpoint
 func (e *Endpoint) IPv4Address() netip.Addr {
+	log.WithFields(logrus.Fields{
+		"functionName": "IPv4Address",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting IPv4 address")
+
 	return e.IPv4
 }
 
 // IPv6Address returns the IPv6 address of the endpoint
 func (e *Endpoint) IPv6Address() netip.Addr {
+	log.WithFields(logrus.Fields{
+		"functionName": "IPv6Address",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting IPv6 address")
+
 	return e.IPv6
 }
 
 // GetNodeMAC returns the MAC address of the node from this endpoint's perspective.
 func (e *Endpoint) GetNodeMAC() mac.MAC {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetNodeMAC",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting node MAC")
+
 	return e.nodeMAC
 }
 
@@ -788,6 +883,11 @@ func (e *Endpoint) GetIdentityLocked() identity.NumericIdentity {
 
 // GetIdentity returns the numeric security identity of the endpoint
 func (e *Endpoint) GetIdentity() identity.NumericIdentity {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetIdentity",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting identity")
+
 	e.unconditionalRLock()
 	defer e.runlock()
 
@@ -800,6 +900,11 @@ func (e *Endpoint) GetEndpointNetNsCookie() uint64 {
 }
 
 func (e *Endpoint) getIdentity() identity.NumericIdentity {
+	log.WithFields(logrus.Fields{
+		"functionName": "getIdentity",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting identity")
+
 	if e.SecurityIdentity != nil {
 		return e.SecurityIdentity.ID
 	}
@@ -837,6 +942,11 @@ func optionChanged(key string, value option.OptionSetting, data interface{}) {
 // applyOptsLocked applies the given options to the endpoint's options and
 // returns true if there were any options changed.
 func (e *Endpoint) applyOptsLocked(opts option.OptionMap) bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "applyOptsLocked",
+		"fileName":     "endpoint.go",
+	}).Debug("Applying options")
+
 	changed := e.Options.ApplyValidated(opts, optionChanged, e) > 0
 	_, exists := opts[option.Debug]
 	if exists && changed {
@@ -848,6 +958,11 @@ func (e *Endpoint) applyOptsLocked(opts option.OptionMap) bool {
 // ApplyOpts tries to lock endpoint, applies the given options to the
 // endpoint's options and returns true if there were any options changed.
 func (e *Endpoint) ApplyOpts(opts option.OptionMap) (bool, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "ApplyOpts",
+		"fileName":     "endpoint.go",
+	}).Debug("Applying options")
+
 	if err := e.lockAlive(); err != nil {
 		return false, err
 	}
@@ -864,6 +979,11 @@ func (e *Endpoint) forcePolicyComputation() {
 
 // SetDefaultOpts configures all options for the endpoint, getting the values from 'opts'.
 func (e *Endpoint) SetDefaultOpts(opts *option.IntOptions) {
+	log.WithFields(logrus.Fields{
+		"functionName": "SetDefaultOpts",
+		"fileName":     "endpoint.go",
+	}).Debug("Setting default options")
+
 	if opts != nil {
 		for k := range EndpointMutableOptionLibrary {
 			e.Options.SetValidated(k, opts.GetValue(k))
@@ -880,6 +1000,11 @@ func (e *Endpoint) SetDefaultOpts(opts *option.IntOptions) {
 // ConntrackLocal determines whether this endpoint is currently using a local
 // table to handle connection tracking (true), or the global table (false).
 func (e *Endpoint) ConntrackLocal() bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "ConntrackLocal",
+		"fileName":     "endpoint.go",
+	}).Debug("Determining if endpoint is using local conntrack table")
+
 	e.unconditionalRLock()
 	defer e.runlock()
 
@@ -889,6 +1014,11 @@ func (e *Endpoint) ConntrackLocal() bool {
 // ConntrackLocalLocked is the same as ConntrackLocal, but assumes that the
 // endpoint is already locked for reading.
 func (e *Endpoint) ConntrackLocalLocked() bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "ConntrackLocalLocked",
+		"fileName":     "endpoint.go",
+	}).Debug("Determining if endpoint is using local conntrack table")
+
 	if e.SecurityIdentity == nil || e.Options == nil ||
 		!e.Options.IsEnabled(option.ConntrackLocal) {
 		return false
@@ -925,6 +1055,11 @@ func FilterEPDir(dirFiles []os.DirEntry) []string {
 // Note that the parse'd endpoint's identity is only partially restored. The
 // caller must call `SetIdentity()` to make the returned endpoint's identity useful.
 func parseEndpoint(ctx context.Context, owner regeneration.Owner, policyGetter policyRepoGetter, namedPortsGetter namedPortsGetter, epJSON []byte) (*Endpoint, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "parseEndpoint",
+		"fileName":     "endpoint.go",
+	}).Debug("Parsing endpoint")
+
 	ep := Endpoint{
 		owner:            owner,
 		namedPortsGetter: namedPortsGetter,
@@ -985,6 +1120,11 @@ func parseEndpoint(ctx context.Context, owner regeneration.Owner, policyGetter p
 // NewDatapathConfiguration return the default endpoint datapath configuration
 // based on whether per-endpoint routes are enabled.
 func NewDatapathConfiguration() models.EndpointDatapathConfiguration {
+	log.WithFields(logrus.Fields{
+		"functionName": "NewDatapathConfiguration",
+		"fileName":     "endpoint.go",
+	}).Debug("Creating new datapath configuration")
+
 	config := models.EndpointDatapathConfiguration{}
 	if option.Config.EnableEndpointRoutes {
 		// Indicate to insert a per endpoint route instead of routing
@@ -1005,6 +1145,11 @@ func NewDatapathConfiguration() models.EndpointDatapathConfiguration {
 }
 
 func (e *Endpoint) LogStatus(typ StatusType, code StatusCode, msg string) {
+	log.WithFields(logrus.Fields{
+		"functionName": "LogStatus",
+		"fileName":     "endpoint.go",
+	}).Debug("Logging status")
+
 	e.unconditionalLock()
 	defer e.unlock()
 	// FIXME GH2323 instead of a mutex we could use a channel to send the status
@@ -1026,6 +1171,11 @@ func (e *Endpoint) LogStatusOKLocked(typ StatusType, msg string) {
 // logStatusLocked logs a status message.
 // Must be called with endpoint.mutex RLock()ed.
 func (e *Endpoint) logStatusLocked(typ StatusType, code StatusCode, msg string) {
+	log.WithFields(logrus.Fields{
+		"functionName": "logStatusLocked",
+		"fileName":     "endpoint.go",
+	}).Debug("Logging status")
+
 	e.status.indexMU.Lock()
 	defer e.status.indexMU.Unlock()
 	sts := &statusLogMsg{
@@ -1076,6 +1226,11 @@ func (e UpdateStateChangeError) Error() string { return e.msg }
 // or if endpoint regeneration was unable to be triggered. Note that the
 // LabelConfiguration in the EndpointConfigurationSpec is *not* consumed here.
 func (e *Endpoint) Update(cfg *models.EndpointConfigurationSpec) error {
+	log.WithFields(logrus.Fields{
+		"functionName": "Update",
+		"fileName":     "endpoint.go",
+	}).Debug("Updating endpoint")
+
 	om, err := EndpointMutableOptionLibrary.ValidateConfigurationMap(cfg.Options)
 	if err != nil {
 		return UpdateValidationError{err.Error()}
@@ -1220,6 +1375,11 @@ type DeleteConfig struct {
 // which depends on kvstore connectivity must be protected by a flag in
 // DeleteConfig and the restore logic must opt-out of it.
 func (e *Endpoint) leaveLocked(conf DeleteConfig) []error {
+	log.WithFields(logrus.Fields{
+		"functionName": "leaveLocked",
+		"fileName":     "endpoint.go",
+	}).Debug("Leaving endpoint")
+
 	errs := []error{}
 
 	// Remove policy references from shared policy structures
@@ -1289,6 +1449,11 @@ func (e *Endpoint) leaveLocked(conf DeleteConfig) []error {
 // GetK8sNamespace returns the name of the pod if the endpoint represents a
 // Kubernetes pod
 func (e *Endpoint) GetK8sNamespace() string {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetK8sNamespace",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting k8s namespace")
+
 	// const after creation
 	ns := e.K8sNamespace
 	return ns
@@ -1304,11 +1469,21 @@ func (e *Endpoint) GetK8sUID() string {
 
 // SetPod sets the pod related to this endpoint.
 func (e *Endpoint) SetPod(pod *slim_corev1.Pod) {
+	log.WithFields(logrus.Fields{
+		"functionName": "SetPod",
+		"fileName":     "endpoint.go",
+	}).Debug("Setting pod")
+
 	e.pod.Store(pod)
 }
 
 // GetPod retrieves the pod related to this endpoint
 func (e *Endpoint) GetPod() *slim_corev1.Pod {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetPod",
+		"fileName":     "endpoint.go",
+	}).Debug("Getting pod")
+
 	return e.pod.Load()
 }
 
@@ -1431,6 +1606,11 @@ func (e *Endpoint) GetDisableLegacyIdentifiers() bool {
 }
 
 func (e *Endpoint) setState(toState State, reason string) bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "setState",
+		"fileName":     "endpoint.go",
+	}).Debug("Setting state")
+
 	// Validate the state transition.
 	fromState := e.state
 
@@ -1528,6 +1708,11 @@ OKState:
 // endpoint.mutex must be Lock()ed
 // endpoint buildMutex must be held!
 func (e *Endpoint) BuilderSetStateLocked(toState State, reason string) bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "BuilderSetStateLocked",
+		"fileName":     "endpoint.go",
+	}).Debug("Setting state")
+
 	// Validate the state transition.
 	fromState := e.state
 	switch fromState { // From state
@@ -1948,6 +2133,11 @@ func (e *Endpoint) ModifyIdentityLabels(source string, addLabels, delLabels labe
 // IsInit returns true if the endpoint still hasn't received identity labels,
 // i.e. has the special identity with label reserved:init.
 func (e *Endpoint) IsInit() bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "IsInit",
+		"fileName":     "endpoint.go",
+	}).Debug("Checking if endpoint is in init state")
+
 	init, found := e.OpLabels.GetIdentityLabel(labels.IDNameInit)
 	return found && init.Source == labels.LabelSourceReserved
 }
@@ -1955,6 +2145,11 @@ func (e *Endpoint) IsInit() bool {
 // InitWithIngressLabels initializes the endpoint with reserved:ingress.
 // It should only be used for the host endpoint.
 func (e *Endpoint) InitWithIngressLabels(ctx context.Context, launchTime time.Duration) {
+	log.WithFields(logrus.Fields{
+		"functionName": "InitWithIngressLabels",
+		"fileName":     "endpoint.go",
+	}).Debug("Initializing endpoint with ingress labels")
+
 	if !e.isIngress {
 		return
 	}
@@ -1974,6 +2169,11 @@ func (e *Endpoint) InitWithIngressLabels(ctx context.Context, launchTime time.Du
 // InitWithNodeLabels initializes the endpoint with the known node labels as
 // well as reserved:host. It should only be used for the host endpoint.
 func (e *Endpoint) InitWithNodeLabels(ctx context.Context, nodeLabels map[string]string, launchTime time.Duration) {
+	log.WithFields(logrus.Fields{
+		"functionName": "InitWithNodeLabels",
+		"fileName":     "endpoint.go",
+	}).Debug("Initializing endpoint with node labels")
+
 	if !e.IsHost() {
 		return
 	}
@@ -2018,6 +2218,11 @@ func (e *Endpoint) InitWithNodeLabels(ctx context.Context, nodeLabels map[string
 //
 // Returns 'true' if endpoint regeneration was triggered.
 func (e *Endpoint) UpdateLabels(ctx context.Context, sourceFilter string, identityLabels, infoLabels labels.Labels, blocking bool) (regenTriggered bool) {
+	log.WithFields(logrus.Fields{
+		"functionName": "UpdateLabels",
+		"fileName":     "endpoint.go",
+	}).Debug("Updating labels of endpoint")
+
 	log.WithFields(logrus.Fields{
 		logfields.ContainerID:    e.GetShortContainerID(),
 		logfields.EndpointID:     e.StringID(),
@@ -2065,6 +2270,11 @@ func (e *Endpoint) UpdateLabels(ctx context.Context, sourceFilter string, identi
 // UpdateLabelsFrom is a convenience function to update an endpoint's identity
 // labels from any source.
 func (e *Endpoint) UpdateLabelsFrom(oldLbls, newLbls map[string]string, source string) error {
+	log.WithFields(logrus.Fields{
+		"functionName": "UpdateLabelsFrom",
+		"fileName":     "endpoint.go",
+	}).Debug("Updating labels of endpoint from source")
+
 	newLabels := labels.Map2Labels(newLbls, source)
 	newIdtyLabels, _ := labelsfilter.Filter(newLabels)
 	oldLabels := labels.Map2Labels(oldLbls, source)
@@ -2094,6 +2304,11 @@ func (e *Endpoint) identityResolutionIsObsolete(myChangeRev int) bool {
 //
 // Must be called with e.mutex NOT held.
 func (e *Endpoint) runIdentityResolver(ctx context.Context, blocking bool) (regenTriggered bool) {
+	log.WithFields(logrus.Fields{
+		"functionName": "runIdentityResolver",
+		"fileName":     "endpoint.go",
+	}).Debug("Running identity resolver")
+
 	err := e.rlockAlive()
 	if err != nil {
 		// If a labels update and an endpoint delete API request arrive
@@ -2145,6 +2360,11 @@ func (e *Endpoint) runIdentityResolver(ctx context.Context, blocking bool) (rege
 }
 
 func (e *Endpoint) identityLabelsChanged(ctx context.Context) (regenTriggered bool, err error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "identityLabelsChanged",
+		"fileName":     "endpoint.go",
+	}).Debug("Checking if identity labels have changed")
+
 	// e.setState() called below, can't take a read lock.
 	if err := e.lockAlive(); err != nil {
 		return false, err
@@ -2315,6 +2535,11 @@ func (e *Endpoint) identityLabelsChanged(ctx context.Context) (regenTriggered bo
 // SetPolicyRevision sets the endpoint's policy revision with the given
 // revision.
 func (e *Endpoint) SetPolicyRevision(rev uint64) {
+	log.WithFields(logrus.Fields{
+		"functionName": "SetPolicyRevision",
+		"fileName":     "endpoint.go",
+	}).Debug("Setting policy revision for endpoint")
+
 	// Wait for any in-progress regenerations to finish.
 	e.buildMutex.Lock()
 	defer e.buildMutex.Unlock()
@@ -2329,6 +2554,11 @@ func (e *Endpoint) SetPolicyRevision(rev uint64) {
 // setPolicyRevision sets the endpoint's policy revision with the given
 // revision.
 func (e *Endpoint) setPolicyRevision(rev uint64) {
+	log.WithFields(logrus.Fields{
+		"functionName": "setPolicyRevision",
+		"fileName":     "endpoint.go",
+	}).Debug("Setting policy revision for endpoint")
+
 	if rev <= e.policyRevision {
 		return
 	}
@@ -2356,6 +2586,11 @@ func (e *Endpoint) setPolicyRevision(rev uint64) {
 
 // cleanPolicySignals closes and removes all policy revision signals.
 func (e *Endpoint) cleanPolicySignals() {
+	log.WithFields(logrus.Fields{
+		"functionName": "cleanPolicySignals",
+		"fileName":     "endpoint.go",
+	}).Debug("Cleaning policy signals for endpoint")
+
 	now := time.Now()
 	for w := range e.policyRevisionSignals {
 		w.done(now)
@@ -2385,6 +2620,11 @@ type policySignal struct {
 // When the done callback is non-nil it will be called just before the channel is closed.
 func (e *Endpoint) WaitForPolicyRevision(ctx context.Context, rev uint64, done func(ts time.Time)) <-chan struct{} {
 	// NOTE: unconditionalLock is used here because this method handles endpoint in disconnected state on its own
+	log.WithFields(logrus.Fields{
+		"functionName": "WaitForPolicyRevision",
+		"fileName":     "endpoint.go",
+	}).Debug("Waiting for policy revision")
+
 	e.unconditionalLock()
 	defer e.unlock()
 
@@ -2419,6 +2659,11 @@ func (e *Endpoint) WaitForPolicyRevision(ctx context.Context, rev uint64, done f
 //
 // endpoint.mutex must be held in read mode at least
 func (e *Endpoint) IsDisconnecting() bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "IsDisconnecting",
+		"fileName":     "endpoint.go",
+	}).Debug("Checking if endpoint is disconnecting")
+
 	return e.state == StateDisconnected || e.state == StateDisconnecting
 }
 
@@ -2466,6 +2711,11 @@ func (e *Endpoint) SyncEndpointHeaderFile() {
 // * cleanup of datapath state (BPF maps, proxy configuration, directories)
 // * releasing of the reference to its allocated security identity
 func (e *Endpoint) Delete(conf DeleteConfig) []error {
+	log.WithFields(logrus.Fields{
+		"functionName": "Delete",
+		"fileName":     "endpoint.go",
+	}).Debug("Deleting endpoint")
+
 	errs := []error{}
 
 	e.Stop()
@@ -2542,6 +2792,11 @@ func (e *Endpoint) Delete(conf DeleteConfig) []error {
 // setDown sets the Endpoint's underlying interface down. If the interface
 // cannot be retrieved, returns nil.
 func (e *Endpoint) setDown() error {
+	log.WithFields(logrus.Fields{
+		"functionName": "setDown",
+		"fileName":     "endpoint.go",
+	}).Debug("Setting endpoint interface down")
+
 	link, err := safenetlink.LinkByName(e.HostInterface())
 	if errors.As(err, &netlink.LinkNotFoundError{}) {
 		// No interface, nothing to do.
@@ -2556,6 +2811,11 @@ func (e *Endpoint) setDown() error {
 
 // WaitForFirstRegeneration waits for the endpoint to complete its first full regeneration.
 func (e *Endpoint) WaitForFirstRegeneration(ctx context.Context) error {
+	log.WithFields(logrus.Fields{
+		"functionName": "WaitForFirstRegeneration",
+		"fileName":     "endpoint.go",
+	}).Debug("Waiting for first endpoint regeneration")
+
 	e.getLogger().Info("Waiting for endpoint to be generated")
 
 	// Default timeout for PUT /endpoint/{id} is 60 seconds, so put timeout
@@ -2606,6 +2866,11 @@ func (e *Endpoint) WaitForFirstRegeneration(ctx context.Context) error {
 // keep endpoint configuration during endpoint restore is enabled, this is a
 // no-op.
 func (e *Endpoint) SetDefaultConfiguration() {
+	log.WithFields(logrus.Fields{
+		"functionName": "SetDefaultConfiguration",
+		"fileName":     "endpoint.go",
+	}).Debug("Setting default configuration for endpoint")
+	
 	e.unconditionalLock()
 	defer e.unlock()
 

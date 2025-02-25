@@ -179,6 +179,11 @@ type CacheValidator func(kind AllocatorChangeKind, id idpool.ID, key AllocatorKe
 //   - WithMin(id) - minimum ID to allocate (default: 1)
 //   - WithMax(id) - maximum ID to allocate (default max(uint64))
 func NewAllocatorForGC(backend Backend, opts ...AllocatorOption) *Allocator {
+	log.WithFields(logrus.Fields{
+		"functionName": "NewAllocatorForGC",
+		"fileName":     "allocator.go",
+	}).Debug("Creating new allocator for GC")
+
 	a := &Allocator{
 		backend: backend,
 		min:     idpool.ID(1),
@@ -305,6 +310,11 @@ type Backend interface {
 // After creation, IDs can be allocated with Allocate() and released with
 // Release()
 func NewAllocator(typ AllocatorKey, backend Backend, opts ...AllocatorOption) (*Allocator, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "NewAllocator",
+		"fileName":     "allocator.go",
+	}).Debug("Creating new allocator")
+
 	a := &Allocator{
 		keyType:      typ,
 		backend:      backend,
@@ -349,6 +359,11 @@ func NewAllocator(typ AllocatorKey, backend Backend, opts ...AllocatorOption) (*
 }
 
 func (a *Allocator) start() {
+	log.WithFields(logrus.Fields{
+		"functionName": "start",
+		"fileName":     "allocator.go",
+	}).Debug("Starting allocator")
+
 	a.initialListDone = a.mainCache.start()
 	if !a.disableGC {
 		go func() {
@@ -365,6 +380,11 @@ func (a *Allocator) start() {
 // WithBackend sets this allocator to use backend. It is expected to be used at
 // initialization.
 func WithBackend(backend Backend) AllocatorOption {
+	log.WithFields(logrus.Fields{
+		"functionName": "WithBackend",
+		"fileName":     "allocator.go",
+	}).Debug("Setting backend")
+
 	return func(a *Allocator) {
 		a.backend = backend
 	}
@@ -377,16 +397,30 @@ func WithBackend(backend Backend) AllocatorOption {
 // not block indefinitely while NewAllocator() emits events on it while
 // populating the initial cache.
 func WithEvents(events AllocatorEventSendChan) AllocatorOption {
+	log.WithFields(logrus.Fields{
+		"functionName": "WithEvents",
+		"fileName":     "allocator.go",
+	}).Debug("Enabling events")
 	return func(a *Allocator) { a.events = events }
 }
 
 // WithMin sets the minimum identifier to be allocated
 func WithMin(id idpool.ID) AllocatorOption {
+	log.WithFields(logrus.Fields{
+		"functionName": "WithMin",
+		"fileName":     "allocator.go",
+	}).Debug("Setting minimum ID")
+
 	return func(a *Allocator) { a.min = id }
 }
 
 // WithMax sets the maximum identifier to be allocated
 func WithMax(id idpool.ID) AllocatorOption {
+	log.WithFields(logrus.Fields{
+		"functionName": "WithMax",
+		"fileName":     "allocator.go",
+	}).Debug("Setting maximum ID")
+
 	return func(a *Allocator) { a.max = id }
 }
 
@@ -395,40 +429,75 @@ func WithMax(id idpool.ID) AllocatorOption {
 // responsibility of the caller to ensure that the mask is not conflicting with
 // min..max.
 func WithPrefixMask(mask idpool.ID) AllocatorOption {
+	log.WithFields(logrus.Fields{
+		"functionName": "WithPrefixMask",
+		"fileName":     "allocator.go",
+	}).Debug("Setting prefix mask")
+
 	return func(a *Allocator) { a.prefixMask = mask }
 }
 
 // WithMasterKeyProtection will watch for delete events on master keys and
 // re-created them if local usage suggests that the key is still in use
 func WithMasterKeyProtection() AllocatorOption {
+	log.WithFields(logrus.Fields{
+		"functionName": "WithMasterKeyProtection",
+		"fileName":     "allocator.go",
+	}).Debug("Enabling master key protection")
+
 	return func(a *Allocator) { a.enableMasterKeyProtection = true }
 }
 
 // WithOperatorIDManagement enables the mode with cilium-operator managing
 // Cilium Identities.
 func WithOperatorIDManagement() AllocatorOption {
+	log.WithFields(logrus.Fields{
+		"functionName": "WithOperatorIDManagement",
+		"fileName":     "allocator.go",
+	}).Debug("Enabling operator ID management")
+
 	return func(a *Allocator) { a.operatorIDManagement = true }
 }
 
 // WithMaxAllocAttempts sets the maxAllocAttempts. If not set, new Allocator
 // will use defaultMaxAllocAttempts.
 func WithMaxAllocAttempts(maxAttempts int) AllocatorOption {
+	log.WithFields(logrus.Fields{
+		"functionName": "WithMaxAllocAttempts",
+		"fileName":     "allocator.go",
+	}).Debug("Setting max allocation attempts")
+
 	return func(a *Allocator) { a.maxAllocAttempts = maxAttempts }
 }
 
 // WithoutGC disables the use of the garbage collector
 func WithoutGC() AllocatorOption {
+	log.WithFields(logrus.Fields{
+		"functionName": "WithoutGC",
+		"fileName":     "allocator.go",
+	}).Debug("Disabling garbage collector")
+
 	return func(a *Allocator) { a.disableGC = true }
 }
 
 // WithoutAutostart prevents starting the allocator when it is initialized
 func WithoutAutostart() AllocatorOption {
+	log.WithFields(logrus.Fields{
+		"functionName": "WithoutAutostart",
+		"fileName":     "allocator.go",
+	}).Debug("Disabling autostart")
+
 	return func(a *Allocator) { a.disableAutostart = true }
 }
 
 // WithCacheValidator registers a validator triggered for each identity
 // notification event to filter out invalid IDs and keys.
 func WithCacheValidator(validator CacheValidator) AllocatorOption {
+	log.WithFields(logrus.Fields{
+		"functionName": "WithCacheValidator",
+		"fileName":     "allocator.go",
+	}).Debug("Registering cache validator")
+
 	return func(a *Allocator) { a.cacheValidators = append(a.cacheValidators, validator) }
 }
 
@@ -436,17 +505,32 @@ func WithCacheValidator(validator CacheValidator) AllocatorOption {
 // constructed.
 // Note: This channel is not owned by the allocator!
 func (a *Allocator) GetEvents() AllocatorEventSendChan {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetEvents",
+		"fileName":     "allocator.go",
+	}).Debug("Getting events")
+
 	return a.events
 }
 
 // Delete deletes an allocator and stops the garbage collector
 func (a *Allocator) Delete() {
+	log.WithFields(logrus.Fields{
+		"functionName": "Delete",
+		"fileName":     "allocator.go",
+	}).Debug("Deleting allocator")
+
 	close(a.stopGC)
 	a.mainCache.stop()
 }
 
 // WaitForInitialSync waits until the initial sync is complete
 func (a *Allocator) WaitForInitialSync(ctx context.Context) error {
+	log.WithFields(logrus.Fields{
+		"functionName": "WaitForInitialSync",
+		"fileName":     "allocator.go",
+	}).Debug("Waiting for initial sync")
+
 	select {
 	case <-a.initialListDone:
 	case <-ctx.Done():
@@ -462,6 +546,11 @@ type RangeFunc func(idpool.ID, AllocatorKey)
 // ForeachCache iterates over the allocator cache and calls RangeFunc on each
 // cached entry
 func (a *Allocator) ForeachCache(cb RangeFunc) {
+	log.WithFields(logrus.Fields{
+		"functionName": "ForeachCache",
+		"fileName":     "allocator.go",
+	}).Debug("Iterating over cache")
+
 	a.mainCache.foreach(cb)
 
 	a.remoteCachesMutex.RLock()
@@ -475,6 +564,11 @@ func (a *Allocator) ForeachCache(cb RangeFunc) {
 // Returns a triple of the selected ID ORed with prefixMask, the ID string and
 // the originally selected ID.
 func (a *Allocator) selectAvailableID() (idpool.ID, string, idpool.ID) {
+	log.WithFields(logrus.Fields{
+		"functionName": "selectAvailableID",
+		"fileName":     "allocator.go",
+	}).Debug("Selecting available ID")
+
 	if id := a.idPool.LeaseAvailableID(); id != idpool.NoID {
 		unmaskedID := id
 		id |= a.prefixMask
@@ -521,6 +615,11 @@ type AllocatorKey interface {
 //  4. error in case of failure
 func (a *Allocator) lockedAllocate(ctx context.Context, key AllocatorKey) (idpool.ID, bool, bool, error) {
 	var firstUse bool
+
+	log.WithFields(logrus.Fields{
+		"functionName": "lockedAllocate",
+		"fileName":     "allocator.go",
+	}).Debug("Allocating key in kvstore")
 
 	kvstore.Trace("Allocating key in kvstore", nil, logrus.Fields{fieldKey: key})
 
@@ -672,6 +771,10 @@ func (a *Allocator) Allocate(ctx context.Context, key AllocatorKey) (idpool.ID, 
 		isNew    bool
 		firstUse bool
 	)
+	log.WithFields(logrus.Fields{
+		"functionName": "Allocate",
+		"fileName":     "allocator.go",
+	}).Debug("Allocating key")
 
 	log.WithField(fieldKey, key).Debug("Allocating key")
 
@@ -742,6 +845,11 @@ func (a *Allocator) Allocate(ctx context.Context, key AllocatorKey) (idpool.ID, 
 }
 
 func (a *Allocator) GetWithRetry(ctx context.Context, key AllocatorKey) (idpool.ID, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetWithRetry",
+		"fileName":     "allocator.go",
+	}).Debug("Getting key with retry")
+
 	getID := func() (idpool.ID, error) {
 		id, err := a.Get(ctx, key)
 		if err != nil {
@@ -794,6 +902,11 @@ func (a *Allocator) GetWithRetry(ctx context.Context, key AllocatorKey) (idpool.
 // has been allocated to this key yet if the client is still holding the given
 // lock.
 func (a *Allocator) GetIfLocked(ctx context.Context, key AllocatorKey, lock kvstore.KVLocker) (idpool.ID, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetIfLocked",
+		"fileName":     "allocator.go",
+	}).Debug("Getting key if locked")
+
 	if id := a.mainCache.get(key.GetKey()); id != idpool.NoID {
 		return id, nil
 	}
@@ -804,6 +917,11 @@ func (a *Allocator) GetIfLocked(ctx context.Context, key AllocatorKey, lock kvst
 // Get returns the ID which is allocated to a key. Returns an ID of NoID if no ID
 // has been allocated to this key yet.
 func (a *Allocator) Get(ctx context.Context, key AllocatorKey) (idpool.ID, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "Get",
+		"fileName":     "allocator.go",
+	}).Debug("Getting key")
+
 	if id := a.mainCache.get(key.GetKey()); id != idpool.NoID {
 		return id, nil
 	}
@@ -814,6 +932,11 @@ func (a *Allocator) Get(ctx context.Context, key AllocatorKey) (idpool.ID, error
 // GetNoCache returns the ID which is allocated to a key in the kvstore,
 // bypassing the local copy of allocated keys.
 func (a *Allocator) GetNoCache(ctx context.Context, key AllocatorKey) (idpool.ID, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "GetNoCache",
+		"fileName":     "allocator.go",
+	}).Debug("Getting key without cache")
+
 	return a.backend.Get(ctx, key)
 }
 
@@ -832,6 +955,11 @@ func (a *Allocator) GetByID(ctx context.Context, id idpool.ID) (AllocatorKey, er
 // ID has been allocated in any remote kvstore to this key yet.
 func (a *Allocator) GetIncludeRemoteCaches(ctx context.Context, key AllocatorKey) (idpool.ID, error) {
 	// check main cache first
+	log.WithFields(logrus.Fields{
+		"functionName": "GetIncludeRemoteCaches",
+		"fileName":     "allocator.go",
+	}).Debug("Getting key including remote caches")
+
 	if id := a.mainCache.get(key.GetKey()); id != idpool.NoID {
 		return id, nil
 	}
@@ -862,6 +990,11 @@ func (a *Allocator) GetIncludeRemoteCaches(ctx context.Context, key AllocatorKey
 // Returns nil if no key is associated with the ID.
 func (a *Allocator) GetByIDIncludeRemoteCaches(ctx context.Context, id idpool.ID) (AllocatorKey, error) {
 	// check main cache first
+	log.WithFields(logrus.Fields{
+		"functionName": "GetByIDIncludeRemoteCaches",
+		"fileName":     "allocator.go",
+	}).Debug("Getting key by ID including remote caches")
+
 	if key := a.mainCache.getByID(id); key != nil {
 		return key, nil
 	}
@@ -891,6 +1024,11 @@ func (a *Allocator) GetByIDIncludeRemoteCaches(ctx context.Context, id idpool.ID
 // the last user has released the ID, the key is removed in the KVstore and
 // the returned lastUse value is true.
 func (a *Allocator) Release(ctx context.Context, key AllocatorKey) (lastUse bool, err error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "Release",
+		"fileName":     "allocator.go",
+	}).Debug("Releasing key")
+
 	if a.operatorIDManagement {
 		log.WithField(fieldKey, key).Debug("Skipping key release when cilium-operator ID management is enabled")
 		return false, nil
@@ -929,11 +1067,21 @@ func (a *Allocator) Release(ctx context.Context, key AllocatorKey) (lastUse bool
 
 // RunGC scans the kvstore for unused master keys and removes them
 func (a *Allocator) RunGC(ctx context.Context, rateLimit *rate.Limiter, staleKeysPrevRound map[string]uint64) (map[string]uint64, *GCStats, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "RunGC",
+		"fileName":     "allocator.go",
+	}).Debug("Running garbage collector")
+
 	return a.backend.RunGC(ctx, rateLimit, staleKeysPrevRound, a.min, a.max)
 }
 
 // RunLocksGC scans the kvstore for stale locks and removes them
 func (a *Allocator) RunLocksGC(ctx context.Context, staleLocksPrevRound map[string]kvstore.Value) (map[string]kvstore.Value, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "RunLocksGC",
+		"fileName":     "allocator.go",
+	}).Debug("Running locks garbage collector")
+
 	return a.backend.RunLocksGC(ctx, staleLocksPrevRound)
 }
 
@@ -963,6 +1111,11 @@ func (a *Allocator) syncLocalKeys() {
 }
 
 func (a *Allocator) syncLocalKey(ctx context.Context, id idpool.ID, key AllocatorKey) {
+	log.WithFields(logrus.Fields{
+		"functionName": "syncLocalKey",
+		"fileName":     "allocator.go",
+	}).Debug("Syncing local key")
+
 	encodedKey := key.GetKey()
 	if newId := a.localKeys.lookupKey(encodedKey); newId != id {
 		return
@@ -1007,6 +1160,11 @@ func (a *Allocator) syncLocalKey(ctx context.Context, id idpool.ID, key Allocato
 }
 
 func (a *Allocator) startLocalKeySync() {
+	log.WithFields(logrus.Fields{
+		"functionName": "startLocalKeySync",
+		"fileName":     "allocator.go",
+	}).Debug("Starting master key sync routine")
+
 	go func(a *Allocator) {
 		for {
 			a.syncLocalKeys()
@@ -1059,6 +1217,11 @@ type RemoteIDCache interface {
 }
 
 func (a *Allocator) NewRemoteCache(remoteName string, remoteAlloc *Allocator) RemoteIDCache {
+	log.WithFields(logrus.Fields{
+		"functionName": "NewRemoteCache",
+		"fileName":     "allocator.go",
+	}).Debug("Creating new remote cache")
+
 	return &remoteCache{
 		name:      remoteName,
 		allocator: remoteAlloc,
@@ -1074,6 +1237,11 @@ func (a *Allocator) NewRemoteCache(remoteName string, remoteAlloc *Allocator) Re
 // start being reported in the identities returned by the ForeachCache()
 // function. RemoteName should be unique per logical "remote".
 func (a *Allocator) watchRemoteKVStore(ctx context.Context, rc *remoteCache, onSync func(context.Context)) {
+	log.WithFields(logrus.Fields{
+		"functionName": "watchRemoteKVStore",
+		"fileName":     "allocator.go",
+	}).Debug("Watching remote kvstore")
+
 	scopedLog := log.WithField(logfields.ClusterName, rc.name)
 	scopedLog.Info("Starting remote kvstore watcher")
 
@@ -1141,6 +1309,11 @@ func (a *Allocator) watchRemoteKVStore(ctx context.Context, rc *remoteCache, onS
 // RemoveRemoteKVStore removes any reference to a remote allocator / kvstore, emitting
 // a deletion event for all previously known identities.
 func (a *Allocator) RemoveRemoteKVStore(remoteName string) {
+	log.WithFields(logrus.Fields{
+		"functionName": "RemoveRemoteKVStore",
+		"fileName":     "allocator.go",
+	}).Debug("Removing remote kvstore")
+
 	a.remoteCachesMutex.Lock()
 	old := a.remoteCaches[remoteName]
 	delete(a.remoteCaches, remoteName)
@@ -1155,11 +1328,21 @@ func (a *Allocator) RemoveRemoteKVStore(remoteName string) {
 // Watch starts watching the remote kvstore and synchronize the identities in
 // the local cache. It blocks until the context is closed.
 func (rc *remoteCache) Watch(ctx context.Context, onSync func(context.Context)) {
+	log.WithFields(logrus.Fields{
+		"functionName": "Watch",
+		"fileName":     "allocator.go",
+	}).Debug("Watching remote kvstore")
+
 	rc.watchFunc(ctx, rc, onSync)
 }
 
 // NumEntries returns the number of entries in the remote cache
 func (rc *remoteCache) NumEntries() int {
+	log.WithFields(logrus.Fields{
+		"functionName": "NumEntries",
+		"fileName":     "allocator.go",
+	}).Debug("Getting number of entries in remote cache")
+
 	if rc == nil {
 		return 0
 	}
@@ -1170,6 +1353,11 @@ func (rc *remoteCache) NumEntries() int {
 // Synced returns whether the initial list of entries has been retrieved from
 // the kvstore, and new events are currently being watched.
 func (rc *remoteCache) Synced() bool {
+	log.WithFields(logrus.Fields{
+		"functionName": "Synced",
+		"fileName":     "allocator.go",
+	}).Debug("Checking if remote cache is synced")
+
 	if rc == nil {
 		return false
 	}
@@ -1191,11 +1379,21 @@ func (rc *remoteCache) Synced() bool {
 // close stops watching for identities in the kvstore associated with the
 // remote cache.
 func (rc *remoteCache) close() {
+	log.WithFields(logrus.Fields{
+		"functionName": "close",
+		"fileName":     "allocator.go",
+	}).Debug("Closing remote cache")
+
 	rc.cache.allocator.Delete()
 }
 
 // Observe the identity changes. Conforms to stream.Observable.
 // Replays the current state of the cache when subscribing.
 func (a *Allocator) Observe(ctx context.Context, next func(AllocatorChange), complete func(error)) {
+	log.WithFields(logrus.Fields{
+		"functionName": "Observe",
+		"fileName":     "allocator.go",
+	}).Debug("Observing identity changes")
+	
 	a.mainCache.Observe(ctx, next, complete)
 }

@@ -20,6 +20,11 @@ func (p *policyWatcher) addK8sNetworkPolicyV1(k8sNP *slim_networkingv1.NetworkPo
 		p.k8sResourceSynced.SetEventTimestamp(apiGroup)
 	}()
 
+	p.log.WithFields(logrus.Fields{
+		"functionName": "addK8sNetworkPolicyV1",
+		"fileName":     "network_policy.go",
+	}).Debug("Adding k8s NetworkPolicy")
+
 	scopedLog := p.log.WithField(logfields.K8sAPIVersion, k8sNP.TypeMeta.APIVersion)
 	rules, err := k8s.ParseNetworkPolicy(k8sNP)
 	if err != nil {
@@ -54,6 +59,11 @@ func (p *policyWatcher) deleteK8sNetworkPolicyV1(k8sNP *slim_networkingv1.Networ
 	defer func() {
 		p.k8sResourceSynced.SetEventTimestamp(apiGroup)
 	}()
+
+	p.log.WithFields(logrus.Fields{
+		"functionName": "deleteK8sNetworkPolicyV1",
+		"fileName":     "network_policy.go",
+	}).Debug("Deleting k8s NetworkPolicy")
 
 	labels := k8s.GetPolicyLabelsv1(k8sNP)
 

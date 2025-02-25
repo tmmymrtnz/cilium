@@ -10,6 +10,7 @@ import (
 	"unsafe"
 
 	"github.com/cilium/ebpf"
+	"github.com/sirupsen/logrus"
 
 	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/byteorder"
@@ -340,6 +341,11 @@ func NewKey(trafficDirection trafficdirection.TrafficDirection, id identity.Nume
 // newEntry returns a PolicyEntry representing the specified parameters in
 // network byte-order.
 func newEntry(proxyPortPriority policyTypes.ProxyPortPriority, authReq policyTypes.AuthRequirement, proxyPort uint16, flags policyEntryFlags) PolicyEntry {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "newEntry",
+		"fileName":     "policymap.go",
+	}).Debug("Creating new policy entry")
+
 	return PolicyEntry{
 		ProxyPortNetwork:  byteorder.HostToNetwork16(proxyPort),
 		Flags:             flags,
@@ -352,6 +358,11 @@ func newEntry(proxyPortPriority policyTypes.ProxyPortPriority, authReq policyTyp
 // network byte-order.
 // This is separated out to be used in unit testing.
 func newAllowEntry(key PolicyKey, proxyPortPriority policyTypes.ProxyPortPriority, authReq policyTypes.AuthRequirement, proxyPort uint16) PolicyEntry {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "newAllowEntry",
+		"fileName":     "policymap.go",
+	}).Debug("Creating new allow entry")
+
 	pef := getPolicyEntryFlags(policyEntryFlagParams{
 		PrefixLen: uint8(key.Prefixlen - StaticPrefixBits),
 	})
@@ -362,6 +373,11 @@ func newAllowEntry(key PolicyKey, proxyPortPriority policyTypes.ProxyPortPriorit
 // network byte-order.
 // This is separated out to be used in unit testing.
 func newDenyEntry(key PolicyKey) PolicyEntry {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "newDenyEntry",
+		"fileName":     "policymap.go",
+	}).Debug("Creating new deny entry")
+
 	pef := getPolicyEntryFlags(policyEntryFlagParams{
 		IsDeny:    true,
 		PrefixLen: uint8(key.Prefixlen - StaticPrefixBits),
@@ -395,6 +411,11 @@ func (pm *PolicyMap) DenyKey(key PolicyKey) error {
 // `trafficDirection` for identity `id` with destination port `dport` over
 // protocol `proto`. It is assumed that `dport` is in host byte-order.
 func (pm *PolicyMap) Deny(trafficDirection trafficdirection.TrafficDirection, id identity.NumericIdentity, proto u8proto.U8proto, dport uint16, portPrefixLen uint8) error {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "Deny",
+		"fileName":     "policymap.go",
+	}).Debug("Denying traffic")
+
 	key := NewKey(trafficDirection, id, proto, dport, portPrefixLen)
 	return pm.DenyKey(key)
 }
@@ -403,6 +424,11 @@ func (pm *PolicyMap) Deny(trafficDirection trafficdirection.TrafficDirection, id
 // allows traffic in `trafficDirection` for identity `id` with destination port
 // `dport`over protocol `proto`. It is assumed that `dport` is in host byte-order.
 func (pm *PolicyMap) Exists(trafficDirection trafficdirection.TrafficDirection, id identity.NumericIdentity, proto u8proto.U8proto, dport uint16, portPrefixLen uint8) bool {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "Exists",
+		"fileName":     "policymap.go",
+	}).Debug("Checking if policy map entry exists")
+
 	key := NewKey(trafficDirection, id, proto, dport, portPrefixLen)
 	_, err := pm.Lookup(&key)
 	return err == nil
@@ -426,6 +452,11 @@ func (pm *PolicyMap) Delete(trafficDirection trafficdirection.TrafficDirection, 
 // DeleteEntry removes an entry from the PolicyMap. It can be used in
 // conjunction with DumpToSlice() to inspect and delete map entries.
 func (pm *PolicyMap) DeleteEntry(entry *PolicyEntryDump) error {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "DeleteEntry",
+		"fileName":     "policymap.go",
+	}).Debug("Deleting policy map entry")
+
 	return pm.Map.Delete(&entry.Key)
 }
 
@@ -466,6 +497,11 @@ func (v *PolicyEntry) IsValid(k *PolicyKey) bool {
 }
 
 func newMap(path string) *PolicyMap {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "newMap",
+		"fileName":     "policymap.go",
+	}).Debug("Creating new policy map")
+
 	mapType := ebpf.LPMTrie
 	flags := bpf.GetPreAllocateMapFlags(mapType)
 	return &PolicyMap{
@@ -511,6 +547,11 @@ func InitMapInfo(maxEntries int) {
 
 // InitCallMap creates the policy call maps in the kernel.
 func InitCallMaps() error {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "InitCallMaps",
+		"fileName":     "policymap.go",
+	}).Debug("Creating policy call maps")
+	
 	policyCallMap := bpf.NewMap(PolicyCallMapName,
 		ebpf.ProgramArray,
 		&CallKey{},

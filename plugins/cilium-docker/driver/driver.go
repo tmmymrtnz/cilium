@@ -62,6 +62,11 @@ func endpointID(id string) string {
 }
 
 func newLibnetworkRoute(route route.Route) api.StaticRoute {
+	log.WithFields(logrus.Fields{
+		"functionName": "newLibnetworkRoute",
+		"fileName":     "driver.go",
+	}).Debug("Creating new libnetwork route")
+
 	rt := api.StaticRoute{
 		Destination: route.Prefix.String(),
 		RouteType:   lnTypes.CONNECTED,
@@ -79,6 +84,10 @@ func newLibnetworkRoute(route route.Route) api.StaticRoute {
 // If url is nil then use SockPath provided by CILIUM_SOCK
 // or the cilium default SockPath
 func NewDriver(ciliumSockPath, dockerHostPath string) (Driver, error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "NewDriver",
+		"fileName":     "driver.go",
+	}).Debug("Creating new driver")
 
 	if ciliumSockPath == "" {
 		ciliumSockPath = client.DefaultSockPath()
@@ -150,6 +159,11 @@ func NewDriver(ciliumSockPath, dockerHostPath string) (Driver, error) {
 }
 
 func (driver *driver) updateCiliumEP(event events.Message) {
+	log.WithFields(logrus.Fields{
+		"functionName": "updateCiliumEP",
+		"fileName":     "driver.go",
+	}).Debug("Updating Cilium endpoint")
+
 	log = log.WithFields(logrus.Fields{"event": fmt.Sprintf("%+v", event)})
 	cont, err := driver.dockerClient.ContainerInspect(context.Background(), event.Actor.ID)
 	if err != nil {
@@ -207,6 +221,11 @@ func (driver *driver) updateCiliumEP(event events.Message) {
 }
 
 func (driver *driver) updateRoutes(addressing *models.NodeAddressing) {
+	log.WithFields(logrus.Fields{
+		"functionName": "updateRoutes",
+		"fileName":     "driver.go",
+	}).Debug("Updating routes")
+
 	driver.mutex.Lock()
 	defer driver.mutex.Unlock()
 
@@ -244,6 +263,11 @@ func (driver *driver) updateRoutes(addressing *models.NodeAddressing) {
 // Listen listens for docker requests on a particular set of endpoints on the given
 // socket path.
 func (driver *driver) Listen(socket string) error {
+	log.WithFields(logrus.Fields{
+		"functionName": "Listen",
+		"fileName":     "driver.go",
+	}).Debug("Listening for docker requests")
+
 	router := mux.NewRouter()
 	router.NotFoundHandler = http.HandlerFunc(notFound)
 
@@ -275,11 +299,21 @@ func (driver *driver) Listen(socket string) error {
 }
 
 func notFound(w http.ResponseWriter, r *http.Request) {
+	log.WithFields(logrus.Fields{
+		"functionName": "notFound",
+		"fileName":     "driver.go",
+	}).Debug("Not found")
+
 	log.WithField(logfields.Object, logfields.Repr(r)).Warn("plugin Not found")
 	http.NotFound(w, r)
 }
 
 func sendError(w http.ResponseWriter, msg string, code int) {
+	log.WithFields(logrus.Fields{
+		"functionName": "sendError",
+		"fileName":     "driver.go",
+	}).Debug("Sending error")
+
 	log.WithFields(logrus.Fields{
 		"code": code,
 		"msg":  msg,
@@ -288,6 +322,11 @@ func sendError(w http.ResponseWriter, msg string, code int) {
 }
 
 func objectResponse(w http.ResponseWriter, obj interface{}) {
+	log.WithFields(logrus.Fields{
+		"functionName": "objectResponse",
+		"fileName":     "driver.go",
+	}).Debug("Sending object response")
+
 	if err := json.NewEncoder(w).Encode(obj); err != nil {
 		sendError(w, "Could not JSON encode response", http.StatusInternalServerError)
 		return
@@ -295,6 +334,11 @@ func objectResponse(w http.ResponseWriter, obj interface{}) {
 }
 
 func emptyResponse(w http.ResponseWriter) {
+	log.WithFields(logrus.Fields{
+		"functionName": "emptyResponse",
+		"fileName":     "driver.go",
+	}).Debug("Sending empty response")
+
 	json.NewEncoder(w).Encode(map[string]string{})
 }
 
@@ -303,6 +347,11 @@ type handshakeResp struct {
 }
 
 func (driver *driver) handshake(w http.ResponseWriter, r *http.Request) {
+	log.WithFields(logrus.Fields{
+		"functionName": "handshake",
+		"fileName":     "driver.go",
+	}).Debug("Handshake")
+
 	err := json.NewEncoder(w).Encode(&handshakeResp{
 		[]string{"NetworkDriver", "IpamDriver"},
 	})
@@ -315,6 +364,11 @@ func (driver *driver) handshake(w http.ResponseWriter, r *http.Request) {
 }
 
 func (driver *driver) capabilities(w http.ResponseWriter, r *http.Request) {
+	log.WithFields(logrus.Fields{
+		"functionName": "capabilities",
+		"fileName":     "driver.go",
+	}).Debug("Capabilities")
+
 	err := json.NewEncoder(w).Encode(&api.GetCapabilityResponse{
 		Scope: "local",
 	})
@@ -327,6 +381,11 @@ func (driver *driver) capabilities(w http.ResponseWriter, r *http.Request) {
 }
 
 func (driver *driver) createNetwork(w http.ResponseWriter, r *http.Request) {
+	log.WithFields(logrus.Fields{
+		"functionName": "createNetwork",
+		"fileName":     "driver.go",
+	}).Debug("Create network request")
+
 	var create api.CreateNetworkRequest
 	err := json.NewDecoder(r.Body).Decode(&create)
 	if err != nil {
@@ -338,6 +397,11 @@ func (driver *driver) createNetwork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (driver *driver) deleteNetwork(w http.ResponseWriter, r *http.Request) {
+	log.WithFields(logrus.Fields{
+		"functionName": "deleteNetwork",
+		"fileName":     "driver.go",
+	}).Debug("Delete network request")
+
 	var delete api.DeleteNetworkRequest
 	if err := json.NewDecoder(r.Body).Decode(&delete); err != nil {
 		sendError(w, "Unable to decode JSON payload: "+err.Error(), http.StatusBadRequest)
@@ -357,6 +421,11 @@ type CreateEndpointRequest struct {
 }
 
 func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
+	log.WithFields(logrus.Fields{
+		"functionName": "createEndpoint",
+		"fileName":     "driver.go",
+	}).Debug("Create endpoint request")
+
 	var create CreateEndpointRequest
 	var err error
 	if err := json.NewDecoder(r.Body).Decode(&create); err != nil {
@@ -435,6 +504,11 @@ func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (driver *driver) deleteEndpoint(w http.ResponseWriter, r *http.Request) {
+	log.WithFields(logrus.Fields{
+		"functionName": "deleteEndpoint",
+		"fileName":     "driver.go",
+	}).Debug("Delete endpoint request")
+
 	var del api.DeleteEndpointRequest
 	var ifName string
 	if err := json.NewDecoder(r.Body).Decode(&del); err != nil {
@@ -456,6 +530,11 @@ func (driver *driver) deleteEndpoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (driver *driver) infoEndpoint(w http.ResponseWriter, r *http.Request) {
+	log.WithFields(logrus.Fields{
+		"functionName": "infoEndpoint",
+		"fileName":     "driver.go",
+	}).Debug("Endpoint info request")
+
 	var info api.EndpointInfoRequest
 	if err := json.NewDecoder(r.Body).Decode(&info); err != nil {
 		sendError(w, "Could not decode JSON encode payload", http.StatusBadRequest)
@@ -467,6 +546,11 @@ func (driver *driver) infoEndpoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
+	log.WithFields(logrus.Fields{
+		"functionName": "joinEndpoint",
+		"fileName":     "driver.go",
+	}).Debug("Join endpoint request")
+
 	var (
 		j   api.JoinRequest
 		err error
@@ -513,6 +597,11 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (driver *driver) leaveEndpoint(w http.ResponseWriter, r *http.Request) {
+	log.WithFields(logrus.Fields{
+		"functionName": "leaveEndpoint",
+		"fileName":     "driver.go",
+	}).Debug("Leave endpoint request")
+	
 	var l api.LeaveRequest
 	if err := json.NewDecoder(r.Body).Decode(&l); err != nil {
 		sendError(w, "Could not decode JSON encode payload", http.StatusBadRequest)

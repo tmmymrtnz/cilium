@@ -118,6 +118,11 @@ var defaultConfig = config{
 func newIdentityAllocator(params identityAllocatorParams) identityAllocatorOut {
 	// iao: updates SelectorCache and regenerates endpoints when
 	// identity allocation / deallocation has occurred.
+	log.WithFields(logrus.Fields{
+		"functionName": "newIdentityAllocator",
+		"fileName":     "cell.go",
+	}).Debug("Creating identity allocator")
+
 	iao := &identityAllocatorOwner{
 		policy:    params.PolicyRepository,
 		epmanager: params.EPManager,
@@ -195,6 +200,11 @@ func (iao *identityAllocatorOwner) UpdateIdentities(added, deleted identity.Iden
 	// This happens when a global identity is allocated locally (for an Endpoint).
 	// We will add the identity twice; once directly from the endpoint creation,
 	// and again from the global identity watcher (k8s or kvstore).
+	log.WithFields(logrus.Fields{
+		"functionName": "UpdateIdentities",
+		"fileName":     "cell.go",
+	}).Debug("Updating identities")
+
 	if iao.policy.GetSelectorCache().CanSkipUpdate(added, deleted) {
 		log.Debug("Skipping no-op identity update")
 		return
@@ -232,6 +242,11 @@ func (iao *identityAllocatorOwner) UpdateIdentities(added, deleted identity.Iden
 // the incremental update.
 func (iao *identityAllocatorOwner) doUpdatePolicyMaps(ctx context.Context) error {
 	// take existing queue, make new empty queue, unlock
+	log.WithFields(logrus.Fields{
+		"functionName": "doUpdatePolicyMaps",
+		"fileName":     "cell.go",
+	}).Debug("Updating policy maps")
+	
 	iao.wgsLock.Lock()
 	if len(iao.wgs) == 0 {
 		iao.wgsLock.Unlock()

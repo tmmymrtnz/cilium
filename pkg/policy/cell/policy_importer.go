@@ -13,6 +13,7 @@ import (
 	"github.com/cilium/hive/cell"
 	"github.com/cilium/hive/job"
 	"github.com/cilium/stream"
+	"github.com/sirupsen/logrus"
 
 	"github.com/cilium/cilium/pkg/container/set"
 	"github.com/cilium/cilium/pkg/endpointmanager"
@@ -73,6 +74,11 @@ type epmanager interface {
 }
 
 func newPolicyImporter(cfg policyImporterParams) PolicyImporter {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "newPolicyImporter",
+		"fileName":     "policy_importer.go",
+	}).Debug("Creating new policy importer")
+
 	i := &policyImporter{
 		log:          cfg.Log,
 		repo:         cfg.Repo,
@@ -101,6 +107,11 @@ func newPolicyImporter(cfg policyImporterParams) PolicyImporter {
 const ResourceIDAnonymous = "policy/anonymous"
 
 func (i *policyImporter) UpdatePolicy(u *policytypes.PolicyUpdate) {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "UpdatePolicy",
+		"fileName":     "policy_importer.go",
+	}).Debug("Updating policy")
+
 	i.q <- u
 }
 
@@ -118,6 +129,11 @@ func concat(buf []*policytypes.PolicyUpdate, in *policytypes.PolicyUpdate) []*po
 //
 // It returns the set of stale prefixes that should be deallocated after policy updates are complete.
 func (i *policyImporter) updatePrefixes(ctx context.Context, updates []*policytypes.PolicyUpdate) (toPrune map[ipcachetypes.ResourceID][]netip.Prefix) {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "updatePrefixes",
+		"fileName":     "policy_importer.go",
+	}).Debug("Updating prefixes")
+
 	if i.ipc == nil {
 		return
 	}
@@ -233,6 +249,11 @@ func (i *policyImporter) updatePrefixes(ctx context.Context, updates []*policyty
 
 // prunePrefixes removes the CIDR labels from the given set of (resource, prefix) pairs.
 func (i *policyImporter) prunePrefixes(prunePrefixes map[ipcachetypes.ResourceID][]netip.Prefix) {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "prunePrefixes",
+		"fileName":     "policy_importer.go",
+	}).Debug("Pruning prefixes")
+
 	if i.ipc == nil {
 		return
 	}
@@ -261,6 +282,11 @@ func (i *policyImporter) prunePrefixes(prunePrefixes map[ipcachetypes.ResourceID
 // CIDR identities.
 // (Does not actually return error, just to satisfy the Job signature)
 func (i *policyImporter) processUpdates(ctx context.Context, updates []*policytypes.PolicyUpdate) error {
+	logrus.WithFields(logrus.Fields{
+		"functionName": "processUpdates",
+		"fileName":     "policy_importer.go",
+	}).Debug("Processing updates")
+	
 	if len(updates) == 0 {
 		return nil
 	}

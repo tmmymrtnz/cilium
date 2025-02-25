@@ -27,6 +27,12 @@ func (p *policyWatcher) onUpsert(
 	resourceID ipcacheTypes.ResourceID,
 	dc chan uint64,
 ) error {
+	p.log.WithFields(logrus.Fields{
+		"functionName": "onUpsert",
+		"fileName":     "cilium_network_policy.go",
+	}).Debug("Upserting CiliumNetworkPolicy")
+
+
 	initialRecvTime := time.Now()
 
 	defer func() {
@@ -80,6 +86,10 @@ func (p *policyWatcher) onDelete(
 	resourceID ipcacheTypes.ResourceID,
 	dc chan uint64,
 ) {
+	p.log.WithFields(logrus.Fields{
+		"functionName": "onDelete",
+		"fileName":     "cilium_network_policy.go",
+	}).Debug("Deleting CiliumNetworkPolicy")
 	p.deleteCiliumNetworkPolicyV2(cnp, resourceID, dc)
 
 	delete(p.cnpCache, key)
@@ -108,6 +118,10 @@ func (p *policyWatcher) resolveCiliumNetworkPolicyRefs(
 	// We need to deepcopy this structure because we are writing
 	// fields in cnp.Parse() in upsertCiliumNetworkPolicyV2.
 	// See https://github.com/cilium/cilium/blob/27fee207f5422c95479422162e9ea0d2f2b6c770/pkg/policy/api/ingress.go#L112-L134
+	p.log.WithFields(logrus.Fields{
+		"functionName": "resolveCiliumNetworkPolicyRefs",
+		"fileName":     "cilium_network_policy.go",
+	}).Debug("Resolving CiliumNetworkPolicy references")
 	translatedCNP := cnp.DeepCopy()
 
 	// Resolve ToService references
@@ -129,6 +143,11 @@ func (p *policyWatcher) upsertCiliumNetworkPolicyV2(cnp *types.SlimCNP, initialR
 		logfields.K8sAPIVersion:           cnp.TypeMeta.APIVersion,
 		logfields.K8sNamespace:            cnp.ObjectMeta.Namespace,
 	})
+
+	p.log.WithFields(logrus.Fields{
+		"functionName": "upsertCiliumNetworkPolicyV2",
+		"fileName":     "cilium_network_policy.go",
+	}).Debug("Upserting CiliumNetworkPolicy")
 
 	scopedLog.Debug("Adding CiliumNetworkPolicy")
 	namespace := k8sUtils.ExtractNamespace(&cnp.ObjectMeta)
@@ -168,6 +187,11 @@ func (p *policyWatcher) deleteCiliumNetworkPolicyV2(cnp *types.SlimCNP, resource
 		logfields.K8sNamespace:            cnp.ObjectMeta.Namespace,
 	})
 
+	p.log.WithFields(logrus.Fields{
+		"functionName": "deleteCiliumNetworkPolicyV2",
+		"fileName":     "cilium_network_policy.go",
+	}).Debug("Deleting CiliumNetworkPolicy")
+
 	scopedLog.Debug("Deleting CiliumNetworkPolicy")
 	namespace := k8sUtils.ExtractNamespace(&cnp.ObjectMeta)
 	if namespace == "" {
@@ -192,6 +216,10 @@ func (p *policyWatcher) deleteCiliumNetworkPolicyV2(cnp *types.SlimCNP, resource
 }
 
 func (p *policyWatcher) registerResourceWithSyncFn(ctx context.Context, resource string, syncFn func() bool) {
+	p.log.WithFields(logrus.Fields{
+		"functionName": "registerResourceWithSyncFn",
+		"fileName":     "cilium_network_policy.go",
+	}).Debug("Registering resource with sync function")
 	p.k8sResourceSynced.BlockWaitGroupToSyncResources(ctx.Done(), nil, syncFn, resource)
 	p.k8sAPIGroups.AddAPI(resource)
 }
@@ -199,6 +227,10 @@ func (p *policyWatcher) registerResourceWithSyncFn(ctx context.Context, resource
 // reportCNPChangeMetrics generates metrics for changes (Add, Update, Delete) to
 // Cilium Network Policies depending on the operation's success.
 func reportCNPChangeMetrics(err error) {
+	log.WithFields(logrus.Fields{
+		"functionName": "reportCNPChangeMetrics",
+		"fileName":     "cilium_network_policy.go",
+	}).Debug("Reporting CiliumNetworkPolicy change metrics")
 	if err != nil {
 		metrics.PolicyChangeTotal.WithLabelValues(metrics.LabelValueOutcomeFail).Inc()
 	} else {
@@ -207,6 +239,10 @@ func reportCNPChangeMetrics(err error) {
 }
 
 func resourceIDForCiliumNetworkPolicy(key resource.Key, cnp *types.SlimCNP) ipcacheTypes.ResourceID {
+	log.WithFields(logrus.Fields{
+		"functionName": "resourceIDForCiliumNetworkPolicy",
+		"fileName":     "cilium_network_policy.go",
+	}).Debug("Creating ResourceID for CiliumNetworkPolicy")
 	resourceKind := ipcacheTypes.ResourceKindCNP
 	if len(key.Namespace) == 0 {
 		resourceKind = ipcacheTypes.ResourceKindCCNP
