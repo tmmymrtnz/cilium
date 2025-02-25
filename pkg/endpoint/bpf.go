@@ -89,7 +89,7 @@ func init() {
 
 // policyMapPath returns the path to the policy map of endpoint.
 func (e *Endpoint) policyMapPath() string {
-	log.withFields(logrus.Fields{
+	log.WithFields(logrus.Fields{
 		"functionName": "policyMapPath",
 		"fileName":     "bpf.go",
 	}).Debug("Getting policy map path")
@@ -1816,7 +1816,7 @@ func CheckHealth(ep *Endpoint) error {
 		"functionName": "CheckHealth",
 		"fileName":     "bpf.go",
 	}).Debug("Checking health")
-	
+
 	iface := ep.HostInterface()
 	if iface == "" {
 		handleNoHostInterfaceOnce.Do(func() {
