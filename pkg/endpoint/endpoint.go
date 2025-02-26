@@ -738,10 +738,10 @@ func (e *Endpoint) GetID() uint64 {
 
 // GetLabels returns the labels.
 func (e *Endpoint) GetLabels() labels.Labels {
-	log.WithFields(logrus.Fields{
-		"functionName": "GetLabels",
-		"fileName":     "endpoint.go",
-	}).Debug("Getting labels")
+	// log.WithFields(logrus.Fields{
+	// 	"functionName": "GetLabels",
+	// 	"fileName":     "endpoint.go",
+	// }).Debug("Getting labels")
 
 	if e.SecurityIdentity == nil {
 		return labels.Labels{}
@@ -883,10 +883,10 @@ func (e *Endpoint) GetIdentityLocked() identity.NumericIdentity {
 
 // GetIdentity returns the numeric security identity of the endpoint
 func (e *Endpoint) GetIdentity() identity.NumericIdentity {
-	log.WithFields(logrus.Fields{
-		"functionName": "GetIdentity",
-		"fileName":     "endpoint.go",
-	}).Debug("Getting identity")
+	// log.WithFields(logrus.Fields{
+	// 	"functionName": "GetIdentity",
+	// 	"fileName":     "endpoint.go",
+	// }).Debug("Getting identity")
 
 	e.unconditionalRLock()
 	defer e.runlock()
@@ -900,10 +900,10 @@ func (e *Endpoint) GetEndpointNetNsCookie() uint64 {
 }
 
 func (e *Endpoint) getIdentity() identity.NumericIdentity {
-	log.WithFields(logrus.Fields{
-		"functionName": "getIdentity",
-		"fileName":     "endpoint.go",
-	}).Debug("Getting identity")
+	// log.WithFields(logrus.Fields{
+	// 	"functionName": "getIdentity",
+	// 	"fileName":     "endpoint.go",
+	// }).Debug("Getting identity")
 
 	if e.SecurityIdentity != nil {
 		return e.SecurityIdentity.ID
@@ -1449,10 +1449,10 @@ func (e *Endpoint) leaveLocked(conf DeleteConfig) []error {
 // GetK8sNamespace returns the name of the pod if the endpoint represents a
 // Kubernetes pod
 func (e *Endpoint) GetK8sNamespace() string {
-	log.WithFields(logrus.Fields{
-		"functionName": "GetK8sNamespace",
-		"fileName":     "endpoint.go",
-	}).Debug("Getting k8s namespace")
+	// log.WithFields(logrus.Fields{
+	// 	"functionName": "GetK8sNamespace",
+	// 	"fileName":     "endpoint.go",
+	// }).Debug("Getting k8s namespace")
 
 	// const after creation
 	ns := e.K8sNamespace
@@ -1479,10 +1479,10 @@ func (e *Endpoint) SetPod(pod *slim_corev1.Pod) {
 
 // GetPod retrieves the pod related to this endpoint
 func (e *Endpoint) GetPod() *slim_corev1.Pod {
-	log.WithFields(logrus.Fields{
-		"functionName": "GetPod",
-		"fileName":     "endpoint.go",
-	}).Debug("Getting pod")
+	// log.WithFields(logrus.Fields{
+	// 	"functionName": "GetPod",
+	// 	"fileName":     "endpoint.go",
+	// }).Debug("Getting pod")
 
 	return e.pod.Load()
 }
