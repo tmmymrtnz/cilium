@@ -23,7 +23,7 @@
 #define ACTION_UNKNOWN_ICMP6_NS CTX_ACT_OK
 
 #ifndef VLAN_FILTER
-# define VLAN_FILTER(ifindex, vlan_id) return false;
+#define VLAN_FILTER(ifindex, vlan_id) (false)
 #endif
 
 #include "lib/common.h"
@@ -54,41 +54,40 @@
 #include "lib/encrypt.h"
 #include "lib/wireguard.h"
 #include "lib/vxlan.h"
+#include <linux/bpf.h>
+#include <bpf/bpf_helpers.h>
 
 #define host_egress_policy_hook(ctx, src_sec_identity, ext_err) CTX_ACT_OK
 #define host_wg_encrypt_hook(ctx, proto) wg_maybe_redirect_to_encrypt(ctx, proto)
+
+int tail_handle_ipv6_cont(struct __ctx_buff *ctx, bool from_host);
+int handle_ipv6(struct __ctx_buff *ctx, __u32 src_sec_identity, __u32 ipcache_srcid, bool from_host, bool *punt_to_stack, int *ext_err);
 
 /* Bit 0 is skipped for robustness, as it's used in some places to indicate from_host itself. */
 #define FROM_HOST_FLAG_NEED_HOSTFW (1 << 1)
 #define FROM_HOST_FLAG_HOST_ID (1 << 2)
 
 static __always_inline bool allow_vlan(__u32 __maybe_unused ifindex, __u32 __maybe_unused vlan_id) {
+	bool result;
     bpf_printk("bpf_host: allow_vlan: Entering with ifindex=%u, vlan_id=%u", ifindex, vlan_id);
-    bool result = VLAN_FILTER(ifindex, vlan_id);
+    result = VLAN_FILTER(ifindex, vlan_id);
     bpf_printk("bpf_host: allow_vlan: VLAN_FILTER returned result=%d", result);
-    return result;
+	return result;
 }
 
 #if defined(ENABLE_IPV4) || defined(ENABLE_IPV6)
 static __always_inline int rewrite_dmac_to_host(struct __ctx_buff *ctx)
 {
-    /* When attached to cilium_host, we rewrite the DMAC to the mac of
-     * cilium_host (peer) to ensure the packet is being considered to be
-     * addressed to the host (PACKET_HOST).
-     */
+    int ret;
     union macaddr cilium_net_mac = CILIUM_NET_MAC;
-
     bpf_printk("bpf_host: rewrite_dmac_to_host: Rewriting DMAC to %x:%x:%x:%x:%x:%x",
                cilium_net_mac.addr[0], cilium_net_mac.addr[1], cilium_net_mac.addr[2],
                cilium_net_mac.addr[3], cilium_net_mac.addr[4], cilium_net_mac.addr[5]);
-
-    /* Rewrite to destination MAC of cilium_net (remote peer) */
-    int ret = eth_store_daddr(ctx, (__u8 *) &cilium_net_mac.addr, 0);
+    ret = eth_store_daddr(ctx, (__u8 *) &cilium_net_mac.addr, 0);
     if (ret < 0) {
         bpf_printk("bpf_host: rewrite_dmac_to_host: eth_store_daddr failed, ret=%d, returning DROP_WRITE_ERROR", ret);
         return DROP_WRITE_ERROR;
     }
-
     bpf_printk("bpf_host: rewrite_dmac_to_host: DMAC rewritten successfully, returning CTX_ACT_OK");
     return CTX_ACT_OK;
 }
@@ -100,8 +99,9 @@ static __always_inline int rewrite_dmac_to_host(struct __ctx_buff *ctx)
 
 static __always_inline bool identity_from_ipcache_ok(void)
 {
+    bool result;
     bpf_printk("bpf_host: identity_from_ipcache_ok: SECCTX_FROM_IPCACHE=%d", SECCTX_FROM_IPCACHE);
-    bool result = SECCTX_FROM_IPCACHE == SECCTX_FROM_IPCACHE_OK;
+    result = SECCTX_FROM_IPCACHE == SECCTX_FROM_IPCACHE_OK;
     bpf_printk("bpf_host: identity_from_ipcache_ok: Result=%d", result);
     return result;
 }
@@ -363,8 +363,7 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
     from_host_raw = ctx_load_and_clear_meta(ctx, CB_FROM_HOST);
     bpf_printk("bpf_host: handle_ipv6_cont: from_host_raw=%u", from_host_raw);
 
-    if (from_host_raw & FROM_HOST_FLAG_NEE
-D_HOSTFW) {
+    if (from_host_raw & FROM_HOST_FLAG_NEED_HOSTFW) {
         struct ct_buffer6 *ct_buffer;
         __u32 zero = 0;
         __u32 remote_id = WORLD_IPV6_ID;
@@ -560,6 +559,8 @@ skip_tunnel:
     return CTX_ACT_OK;
 }
 
+#if defined(ENABLE_IPV6)
+
 static __always_inline int
 tail_handle_ipv6_cont(struct __ctx_buff *ctx, bool from_host)
 {
@@ -586,8 +587,9 @@ __section_tail(CILIUM_MAP_CALLS, CILIUM_CALL_IPV6_CONT_FROM_HOST)
 static __always_inline
 int tail_handle_ipv6_cont_from_host(struct __ctx_buff *ctx)
 {
+    int ret;
     bpf_printk("bpf_host: tail_handle_ipv6_cont_from_host: Entering");
-    int ret = tail_handle_ipv6_cont(ctx, true);
+    ret = tail_handle_ipv6_cont(ctx, true);
     bpf_printk("bpf_host: tail_handle_ipv6_cont_from_host: tail_handle_ipv6_cont returned ret=%d", ret);
     return ret;
 }
@@ -596,8 +598,9 @@ __section_tail(CILIUM_MAP_CALLS, CILIUM_CALL_IPV6_CONT_FROM_NETDEV)
 static __always_inline
 int tail_handle_ipv6_cont_from_netdev(struct __ctx_buff *ctx)
 {
+    int ret;
     bpf_printk("bpf_host: tail_handle_ipv6_cont_from_netdev: Entering");
-    int ret = tail_handle_ipv6_cont(ctx, false);
+    ret = tail_handle_ipv6_cont(ctx, false);
     bpf_printk("bpf_host: tail_handle_ipv6_cont_from_netdev: tail_handle_ipv6_cont returned ret=%d", ret);
     return ret;
 }
