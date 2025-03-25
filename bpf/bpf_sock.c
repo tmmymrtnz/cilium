@@ -7,6 +7,12 @@
 #include <node_config.h>
 #include <netdev_config.h>
 
+#undef __uint
+#undef __type
+#undef __array
+
+#include <bpf_helpers.h>
+
 #define SKIP_POLICY_MAP	1
 #define SKIP_CALLS_MAP	1
 

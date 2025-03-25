@@ -55,6 +55,11 @@
 #include "lib/wireguard.h"
 #include "lib/vxlan.h"
 #include <linux/bpf.h>
+
+#undef __uint
+#undef __type
+#undef __array
+
 #include <bpf/bpf_helpers.h>
 
 #define host_egress_policy_hook(ctx, src_sec_identity, ext_err) CTX_ACT_OK

@@ -8,6 +8,12 @@
 #include <netdev_config.h>
 #include <filter_config.h>
 
+#undef __uint
+#undef __type
+#undef __array
+
+#include <bpf_helpers.h>
+
 #define IS_BPF_XDP 1
 
 /* WORLD_IPV{4,6}_ID varies based on dualstack being enabled. Real values are
