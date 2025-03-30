@@ -106,9 +106,13 @@ resolve_srcid_ipv6(struct __ctx_buff *ctx, struct ipv6hdr *ip6,
     struct remote_endpoint_info *info = NULL;
     union v6addr *src;
 
-    trace_printk("resolve_srcid_ipv6: entry srcid_from_ipcache=%u from_host=%d src_ip=%pI6 dst_ip=%pI6\n",
-                sizeof("resolve_srcid_ipv6: entry srcid_from_ipcache=%u from_host=%d src_ip=%pI6 dst_ip=%pI6\n"),
-                srcid_from_ipcache, from_host, &ip6->saddr, &ip6->daddr);
+    trace_printk("resolve_srcid_ipv6: entry srcid_from_ipcache=%u from_host=%d\n",
+        sizeof("resolve_srcid_ipv6: entry srcid_from_ipcache=%u from_host=%d\n"),
+        srcid_from_ipcache, from_host);
+    
+    trace_printk("resolve_srcid_ipv6: src_ip=%pI6 dst_ip=%pI6\n",
+        sizeof("resolve_srcid_ipv6: src_ip=%pI6 dst_ip=%pI6\n"),
+        &ip6->saddr, &ip6->daddr);    
 
     if (identity_is_reserved(srcid_from_ipcache)) {
         src = (union v6addr *) &ip6->saddr;
@@ -173,9 +177,17 @@ handle_ipv6(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
         return DROP_INVALID;
     }
 
-    trace_printk("handle_ipv6: entry secctx=%u ipcache_srcid=%u from_host=%d SMAC=%pm DMAC=%pm src_ip=%pI6 dst_ip=%pI6\n",
-                sizeof("handle_ipv6: entry secctx=%u ipcache_srcid=%u from_host=%d SMAC=%pm DMAC=%pm src_ip=%pI6 dst_ip=%pI6\n"),
-                secctx, ipcache_srcid, from_host, eth->h_source, eth->h_dest, &ip6->saddr, &ip6->daddr);
+    trace_printk("handle_ipv6: entry secctx=%u ipcache_srcid=%u from_host=%d\n",
+        sizeof("handle_ipv6: entry secctx=%u ipcache_srcid=%u from_host=%d\n"),
+        secctx, ipcache_srcid, from_host);
+
+    trace_printk("handle_ipv6: SMAC=%pm DMAC=%pm\n",
+            sizeof("handle_ipv6: SMAC=%pm DMAC=%pm\n"),
+            eth->h_source, eth->h_dest);
+
+    trace_printk("handle_ipv6: src_ip=%pI6 dst_ip=%pI6\n",
+            sizeof("handle_ipv6: src_ip=%pI6 dst_ip=%pI6\n"),
+            &ip6->saddr, &ip6->daddr);
 
     if (ip6->nexthdr == IPPROTO_TCP && revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -326,9 +338,17 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
         return DROP_INVALID;
     }
 
-    trace_printk("handle_ipv6_cont: entry secctx=%u from_host=%d SMAC=%pm DMAC=%pm src_ip=%pI6 dst_ip=%pI6\n",
-                sizeof("handle_ipv6_cont: entry secctx=%u from_host=%d SMAC=%pm DMAC=%pm src_ip=%pI6 dst_ip=%pI6\n"),
-                secctx, from_host, eth->h_source, eth->h_dest, &ip6->saddr, &ip6->daddr);
+    trace_printk("handle_ipv6_cont: entry secctx=%u from_host=%d\n",
+        sizeof("handle_ipv6_cont: entry secctx=%u from_host=%d\n"),
+        secctx, from_host);
+
+    trace_printk("handle_ipv6_cont: SMAC=%pm DMAC=%pm\n",
+            sizeof("handle_ipv6_cont: SMAC=%pm DMAC=%pm\n"),
+            eth->h_source, eth->h_dest);
+
+    trace_printk("handle_ipv6_cont: src_ip=%pI6 dst_ip=%pI6\n",
+            sizeof("handle_ipv6_cont: src_ip=%pI6 dst_ip=%pI6\n"),
+            &ip6->saddr, &ip6->daddr);
 
     if (ip6->nexthdr == IPPROTO_TCP && revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -672,11 +692,17 @@ handle_to_netdev_ipv6(struct __ctx_buff *ctx, __u32 src_sec_identity,
                     sizeof("handle_to_netdev_ipv6: invalid ip6 data\n"));
         return DROP_INVALID;
     }
+    trace_printk("handle_to_netdev_ipv6: entry src_sec_identity=%u\n",
+        sizeof("handle_to_netdev_ipv6: entry src_sec_identity=%u\n"),
+        src_sec_identity);
 
-    trace_printk("handle_to_netdev_ipv6: entry src_sec_identity=%u SMAC=%pm DMAC=%pm src_ip=%pI6 dst_ip=%pI6\n",
-                supplevel=debug msg="handle_to_netdev_ipv6: entry src_sec_identity=%u SMAC=%pm DMAC=%pm src_ip=%pI6 dst_ip=%pI6\n",
-                sizeof("handle_to_netdev_ipv6: entry src_sec_identity=%u SMAC=%pm DMAC=%pm src_ip=%pI6 dst_ip=%pI6\n"),
-                src_sec_identity, eth->h_source, eth->h_dest, &ip6->saddr, &ip6->daddr);
+    trace_printk("handle_to_netdev_ipv6: SMAC=%pm DMAC=%pm\n",
+            sizeof("handle_to_netdev_ipv6: SMAC=%pm DMAC=%pm\n"),
+            eth->h_source, eth->h_dest);
+
+    trace_printk("handle_to_netdev_ipv6: src_ip=%pI6 dst_ip=%pI6\n",
+            sizeof("handle_to_netdev_ipv6: src_ip=%pI6 dst_ip=%pI6\n"),
+            &ip6->saddr, &ip6->daddr);
 
     if (ip6->nexthdr == IPPROTO_TCP && revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -738,9 +764,13 @@ resolve_srcid_ipv4(struct __ctx_buff *ctx, struct iphdr *ip4,
     __u32 src_id = WORLD_IPV4_ID, srcid_from_ipcache = srcid_from_proxy;
     struct remote_endpoint_info *info = NULL;
 
-    trace_printk("resolve_srcid_ipv4: entry srcid_from_proxy=%u from_host=%d src_ip=%pI4 dst_ip=%pI4\n",
-                sizeof("resolve_srcid_ipv4: entry srcid_from_proxy=%u from_host=%d src_ip=%pI4 dst_ip=%pI4\n"),
-                srcid_from_proxy, from_host, &ip4->saddr, &ip4->daddr);
+    trace_printk("resolve_srcid_ipv4: entry srcid_from_proxy=%u from_host=%d\n",
+        sizeof("resolve_srcid_ipv4: entry srcid_from_proxy=%u from_host=%d\n"),
+        srcid_from_proxy, from_host);
+
+    trace_printk("resolve_srcid_ipv4: src_ip=%pI4 dst_ip=%pI4\n",
+            sizeof("resolve_srcid_ipv4: src_ip=%pI4 dst_ip=%pI4\n"),
+            &ip4->saddr, &ip4->daddr);
 
     if (identity_is_reserved(srcid_from_ipcache)) {
         info = lookup_ip4_remote_endpoint(ip4->saddr, 0);
@@ -803,9 +833,17 @@ handle_ipv4(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
         return DROP_INVALID;
     }
 
-    trace_printk("handle_ipv4: entry secctx=%u ipcache_srcid=%u from_host=%d SMAC=%pm DMAC=%pm src_ip=%pI4 dst_ip=%pI4\n",
-                sizeof("handle_ipv4: entry secctx=%u ipcache_srcid=%u from_host=%d SMAC=%pm DMAC=%pm src_ip=%pI4 dst_ip=%pI4\n"),
-                secctx, ipcache_srcid, from_host, eth->h_source, eth->h_dest, &ip4->saddr, &ip4->daddr);
+    trace_printk("handle_ipv4: entry secctx=%u ipcache_srcid=%u from_host=%d\n",
+        sizeof("handle_ipv4: entry secctx=%u ipcache_srcid=%u from_host=%d\n"),
+        secctx, ipcache_srcid, from_host);
+
+    trace_printk("handle_ipv4: SMAC=%pm DMAC=%pm\n",
+            sizeof("handle_ipv4: SMAC=%pm DMAC=%pm\n"),
+            eth->h_source, eth->h_dest);
+
+    trace_printk("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n",
+            sizeof("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n"),
+            &ip4->saddr, &ip4->daddr);
 
     if (ip4->protocol == IPPROTO_TCP && revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -940,9 +978,18 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
         return DROP_INVALID;
     }
 
-    trace_printk("handle_ipv4_cont: entry secctx=%u from_host=%d SMAC=%pm DMAC=%pm src_ip=%pI4 dst_ip=%pI4\n",
-                sizeof("handle_ipv4_cont: entry secctx=%u from_host=%d SMAC=%pm DMAC=%pm src_ip=%pI4 dst_ip=%pI4\n"),
-                secctx, from_host, eth->h_source, eth->h_dest, &ip4->saddr, &ip4->daddr);
+    trace_printk("handle_ipv4_cont: entry secctx=%u from_host=%d\n",
+        sizeof("handle_ipv4_cont: entry secctx=%u from_host=%d\n"),
+        secctx, from_host);
+
+    trace_printk("handle_ipv4_cont: SMAC=%pm DMAC=%pm\n",
+            sizeof("handle_ipv4_cont: SMAC=%pm DMAC=%pm\n"),
+            eth->h_source, eth->h_dest);
+
+    trace_printk("handle_ipv4_cont: src_ip=%pI4 dst_ip=%pI4\n",
+            sizeof("handle_ipv4_cont: src_ip=%pI4 dst_ip=%pI4\n"),
+            &ip4->saddr, &ip4->daddr);
+
 
     if (ip4->protocol == IPPROTO_TCP && revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -1313,9 +1360,17 @@ handle_to_netdev_ipv4(struct __ctx_buff *ctx, __u32 src_sec_identity,
         return DROP_INVALID;
     }
 
-    trace_printk("handle_to_netdev_ipv4: entry src_sec_identity=%u SMAC=%pm DMAC=%pm src_ip=%pI4 dst_ip=%pI4\n",
-                sizeof("handle_to_netdev_ipv4: entry src_sec_identity=%u SMAC=%pm DMAC=%pm src_ip=%pI4 dst_ip=%pI4\n"),
-                src_sec_identity, eth->h_source, eth->h_dest, &ip4->saddr, &ip4->daddr);
+    trace_printk("handle_to_netdev_ipv4: entry src_sec_identity=%u\n",
+        sizeof("handle_to_netdev_ipv4: entry src_sec_identity=%u\n"),
+        src_sec_identity);
+
+    trace_printk("handle_to_netdev_ipv4: SMAC=%pm DMAC=%pm\n",
+            sizeof("handle_to_netdev_ipv4: SMAC=%pm DMAC=%pm\n"),
+            eth->h_source, eth->h_dest);
+
+    trace_printk("handle_to_netdev_ipv4: src_ip=%pI4 dst_ip=%pI4\n",
+            sizeof("handle_to_netdev_ipv4: src_ip=%pI4 dst_ip=%pI4\n"),
+            &ip4->saddr, &ip4->daddr);
 
     if (ip4->protocol == IPPROTO_TCP && revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -1529,9 +1584,13 @@ do_netdev(struct __ctx_buff *ctx, __u16 proto, __u32 __maybe_unused identity,
         return DROP_INVALID;
     }
 
-    trace_printk("do_netdev: entry proto=%u identity=%u from_host=%d SMAC=%pm DMAC=%pm\n",
-                sizeof("do_netdev: entry proto=%u identity=%u from_host=%d SMAC=%pm DMAC=%pm\n"),
-                proto, identity, from_host, eth->h_source, eth->h_dest);
+    trace_printk("do_netdev: entry proto=%u identity=%u from_host=%d\n",
+        sizeof("do_netdev: entry proto=%u identity=%u from_host=%d\n"),
+        proto, identity, from_host);
+
+    trace_printk("do_netdev: SMAC=%pm DMAC=%pm\n",
+            sizeof("do_netdev: SMAC=%pm DMAC=%pm\n"),
+            eth->h_source, eth->h_dest);
 
     bpf_clear_meta(ctx);
 
@@ -2515,9 +2574,17 @@ int tail_ipv6_host_policy_ingress(struct __ctx_buff *ctx)
         return DROP_INVALID;
     }
 
-    trace_printk("tail_ipv6_host_policy_ingress: entry src_id=%u traced=%d SMAC=%pm DMAC=%pm src_ip=%pI6 dst_ip=%pI6\n",
-                sizeof("tail_ipv6_host_policy_ingress: entry src_id=%u traced=%d SMAC=%pm DMAC=%pm src_ip=%pI6 dst_ip=%pI6\n"),
-                src_id, traced, eth->h_source, eth->h_dest, &ip6->saddr, &ip6->daddr);
+    trace_printk("tail_ipv6_host_policy_ingress: entry src_id=%u traced=%d\n",
+        sizeof("tail_ipv6_host_policy_ingress: entry src_id=%u traced=%d\n"),
+        src_id, traced);
+
+    trace_printk("tail_ipv6_host_policy_ingress: SMAC=%pm DMAC=%pm\n",
+            sizeof("tail_ipv6_host_policy_ingress: SMAC=%pm DMAC=%pm\n"),
+            eth->h_source, eth->h_dest);
+
+    trace_printk("tail_ipv6_host_policy_ingress: src_ip=%pI6 dst_ip=%pI6\n",
+            sizeof("tail_ipv6_host_policy_ingress: src_ip=%pI6 dst_ip=%pI6\n"),
+            &ip6->saddr, &ip6->daddr);
 
     if (ip6->nexthdr == IPPROTO_TCP && revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -2579,9 +2646,17 @@ int tail_ipv4_host_policy_ingress(struct __ctx_buff *ctx)
         return DROP_INVALID;
     }
 
-    trace_printk("tail_ipv4_host_policy_ingress: entry src_id=%u traced=%d SMAC=%pm DMAC=%pm src_ip=%pI4 dst_ip=%pI4\n",
-                sizeof("tail_ipv4_host_policy_ingress: entry src_id=%u traced=%d SMAC=%pm DMAC=%pm src_ip=%pI4 dst_ip=%pI4\n"),
-                src_id, traced, eth->h_source, eth->h_dest, &ip4->saddr, &ip4->daddr);
+    trace_printk("tail_ipv4_host_policy_ingress: entry src_id=%u traced=%d\n",
+        sizeof("tail_ipv4_host_policy_ingress: entry src_id=%u traced=%d\n"),
+        src_id, traced);
+
+    trace_printk("tail_ipv4_host_policy_ingress: SMAC=%pm DMAC=%pm\n",
+            sizeof("tail_ipv4_host_policy_ingress: SMAC=%pm DMAC=%pm\n"),
+            eth->h_source, eth->h_dest);
+
+    trace_printk("tail_ipv4_host_policy_ingress: src_ip=%pI4 dst_ip=%pI4\n",
+            sizeof("tail_ipv4_host_policy_ingress: src_ip=%pI4 dst_ip=%pI4\n"),
+            &ip4->saddr, &ip4->daddr);
 
     if (ip4->protocol == IPPROTO_TCP && revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
