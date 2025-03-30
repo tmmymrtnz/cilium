@@ -958,7 +958,6 @@ handle_ipv4(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
     struct ethhdr *eth;
     struct iphdr *ip4;
     struct tcphdr *tcp;
-    int l4_off;
 
     if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("handle_ipv4: invalid eth data\n",
@@ -977,7 +976,6 @@ handle_ipv4(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
                 sizeof("handle_ipv4: src=%pI4 dst=%pI4\n"),
                 &ip4->saddr, &ip4->daddr);
 
-    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
     if (ip4->protocol == IPPROTO_TCP &&
         revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -1102,7 +1100,7 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
     struct tcphdr *tcp;
     struct remote_endpoint_info *info;
     struct endpoint_info *ep;
-    int ret, l4_off;
+    int ret;
     __u8 encrypt_key __maybe_unused = 0;
     __u32 magic = MARK_MAGIC_IDENTITY;
     bool from_proxy = false;
@@ -1124,7 +1122,6 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
                 sizeof("handle_ipv4_cont: src=%pI4 dst=%pI4\n"),
                 &ip4->saddr, &ip4->daddr);
 
-    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
     if (ip4->protocol == IPPROTO_TCP &&
         revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -1366,7 +1363,7 @@ tail_handle_ipv4_cont(struct __ctx_buff *ctx, bool from_host)
     struct ethhdr *eth;
     struct iphdr *ip4;
     struct tcphdr *tcp;
-    int ret, l4_off;
+    int ret;
     __s8 ext_err = 0;
 
     if (!revalidate_data(ctx, &data, &data_end, &eth)) {
@@ -1386,7 +1383,6 @@ tail_handle_ipv4_cont(struct __ctx_buff *ctx, bool from_host)
                 sizeof("tail_handle_ipv4_cont: src=%pI4 dst=%pI4\n"),
                 &ip4->saddr, &ip4->daddr);
 
-    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
     if (ip4->protocol == IPPROTO_TCP &&
         revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -1437,7 +1433,7 @@ tail_handle_ipv4(struct __ctx_buff *ctx, __u32 ipcache_srcid, const bool from_ho
     struct iphdr *ip4;
     struct tcphdr *tcp;
     bool punt_to_stack = false;
-    int ret, l4_off;
+    int ret;
     __s8 ext_err = 0;
 
     if (!revalidate_data(ctx, &data, &data_end, &eth)) {
@@ -1457,7 +1453,6 @@ tail_handle_ipv4(struct __ctx_buff *ctx, __u32 ipcache_srcid, const bool from_ho
                 sizeof("tail_handle_ipv4: src=%pI4 dst=%pI4\n"),
                 &ip4->saddr, &ip4->daddr);
 
-    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
     if (ip4->protocol == IPPROTO_TCP &&
         revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -1522,7 +1517,6 @@ int tail_handle_ipv4_from_host(struct __ctx_buff *ctx)
     struct ethhdr *eth;
     struct iphdr *ip4;
     struct tcphdr *tcp;
-    int l4_off;
 
     if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("tail_handle_ipv4_from_host: invalid eth data\n",
@@ -1541,7 +1535,6 @@ int tail_handle_ipv4_from_host(struct __ctx_buff *ctx)
                 sizeof("tail_handle_ipv4_from_host: src=%pI4 dst=%pI4\n"),
                 &ip4->saddr, &ip4->daddr);
 
-    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
     if (ip4->protocol == IPPROTO_TCP &&
         revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -1564,7 +1557,6 @@ int tail_handle_ipv4_from_netdev(struct __ctx_buff *ctx)
     struct ethhdr *eth;
     struct iphdr *ip4;
     struct tcphdr *tcp;
-    int l4_off;
 
     if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("tail_handle_ipv4_from_netdev: invalid eth data\n",
@@ -1583,7 +1575,6 @@ int tail_handle_ipv4_from_netdev(struct __ctx_buff *ctx)
                 sizeof("tail_handle_ipv4_from_netdev: src=%pI4 dst=%pI4\n"),
                 &ip4->saddr, &ip4->daddr);
 
-    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
     if (ip4->protocol == IPPROTO_TCP &&
         revalidate_data(ctx, &data, &data_end, &tcp) &&
         (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -1848,7 +1839,7 @@ do_netdev(struct __ctx_buff *ctx, __u16 proto, __u32 __maybe_unused identity,
     int __maybe_unused hdrlen = 0;
     __u8 __maybe_unused next_proto = 0;
     __s8 __maybe_unused ext_err = 0;
-    int ret, l4_off;
+    int ret;
 
     if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("do_netdev: invalid eth data\n",
@@ -1891,7 +1882,6 @@ do_netdev(struct __ctx_buff *ctx, __u16 proto, __u32 __maybe_unused identity,
         trace_printk("do_netdev: src=%pI6 dst=%pI6\n",
                     sizeof("do_netdev: src=%pI6 dst=%pI6\n"),
                     &ip6->saddr, &ip6->daddr);
-        l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
         if (ip6->nexthdr == IPPROTO_TCP &&
             revalidate_data(ctx, &data, &data_end, &tcp) &&
             (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -1949,7 +1939,6 @@ do_netdev(struct __ctx_buff *ctx, __u16 proto, __u32 __maybe_unused identity,
         trace_printk("do_netdev: src=%pI4 dst=%pI4\n",
                     sizeof("do_netdev: src=%pI4 dst=%pI4\n"),
                     &ip4->saddr, &ip4->daddr);
-        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
         if (ip4->protocol == IPPROTO_TCP &&
             revalidate_data(ctx, &data, &data_end, &tcp) &&
             (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -2232,7 +2221,6 @@ int cil_to_netdev(struct __ctx_buff *ctx)
     struct ipv6hdr *ip6 __maybe_unused;
     struct iphdr *ip4 __maybe_unused;
     struct tcphdr *tcp __maybe_unused;
-    int l4_off;
 
     if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("cil_to_netdev: invalid eth data\n",
@@ -2327,7 +2315,6 @@ int cil_to_netdev(struct __ctx_buff *ctx)
         trace_printk("cil_to_netdev: src=%pI6 dst=%pI6\n",
                     sizeof("cil_to_netdev: src=%pI6 dst=%pI6\n"),
                     &ip6->saddr, &ip6->daddr);
-        l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
         if (ip6->nexthdr == IPPROTO_TCP &&
             revalidate_data(ctx, &data, &data_end, &tcp) &&
             (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -2350,7 +2337,6 @@ int cil_to_netdev(struct __ctx_buff *ctx)
         trace_printk("cil_to_netdev: src=%pI4 dst=%pI4\n",
                     sizeof("cil_to_netdev: src=%pI4 dst=%pI4\n"),
                     &ip4->saddr, &ip4->daddr);
-        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
         if (ip4->protocol == IPPROTO_TCP &&
             revalidate_data(ctx, &data, &data_end, &tcp) &&
             (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -2707,7 +2693,6 @@ int cil_to_host(struct __ctx_buff *ctx)
     struct ipv6hdr *ip6 __maybe_unused;
     struct iphdr *ip4 __maybe_unused;
     struct tcphdr *tcp __maybe_unused;
-    int l4_off;
 
     if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("cil_to_host: invalid eth data\n",
@@ -2796,7 +2781,6 @@ skip_ipsec_nodeport_revdnat:
         trace_printk("cil_to_host: src=%pI6 dst=%pI6\n",
                     sizeof("cil_to_host: src=%pI6 dst=%pI6\n"),
                     &ip6->saddr, &ip6->daddr);
-        l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
         if (ip6->nexthdr == IPPROTO_TCP &&
             revalidate_data(ctx, &data, &data_end, &tcp) &&
             (void *)tcp + sizeof(*tcp) <= data_end) {
@@ -2822,7 +2806,6 @@ skip_ipsec_nodeport_revdnat:
         trace_printk("cil_to_host: src=%pI4 dst=%pI4\n",
                     sizeof("cil_to_host: src=%pI4 dst=%pI4\n"),
                     &ip4->saddr, &ip4->daddr);
-        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
         if (ip4->protocol == IPPROTO_TCP &&
             revalidate_data(ctx, &data, &data_end, &tcp) &&
             (void *)tcp + sizeof(*tcp) <= data_end) {
