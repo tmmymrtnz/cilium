@@ -791,7 +791,7 @@ handle_ipv4(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
     struct ethhdr *eth;
     struct tcphdr *tcp __maybe_unused;
 
-    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("handle_ipv4: invalid eth data\n",
                     sizeof("handle_ipv4: invalid eth data\n"));
         return DROP_INVALID;
@@ -928,7 +928,7 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
     __u32 magic = MARK_MAGIC_IDENTITY;
     bool from_proxy = false;
 
-    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("handle_ipv4_cont: invalid eth data\n",
                     sizeof("handle_ipv4_cont: invalid eth data\n"));
         return DROP_INVALID;
@@ -1022,7 +1022,7 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
                         ret);
             return ret;
         }
-        if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        if (!revalidate_data(ctx, &data, &data_end, &eth)) {
             trace_printk("handle_ipv4_cont: invalid eth data after rewrite\n",
                         sizeof("handle_ipv4_cont: invalid eth data after rewrite\n"));
             return DROP_INVALID;
@@ -1301,7 +1301,7 @@ handle_to_netdev_ipv4(struct __ctx_buff *ctx, __u32 src_sec_identity,
     __u32 src_id = 0, ipcache_srcid = 0;
     int ret;
 
-    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("handle_to_netdev_ipv4: invalid eth data\n",
                     sizeof("handle_to_netdev_ipv4: invalid eth data\n"));
         return DROP_INVALID;
@@ -1358,7 +1358,7 @@ do_netdev_encrypt_encap(struct __ctx_buff *ctx, __be16 proto, __u32 src_id)
     struct tcphdr *tcp __maybe_unused;
     int ret;
 
-    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("do_netdev_encrypt_encap: invalid eth data\n",
                     sizeof("do_netdev_encrypt_encap: invalid eth data\n"));
         return DROP_INVALID;
@@ -1789,7 +1789,7 @@ int cil_from_host(struct __ctx_buff *ctx)
     struct ethhdr *eth;
     void *data, *data_end;
 
-    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("cil_from_host: invalid eth data\n",
                     sizeof("cil_from_host: invalid eth data\n"));
         return DROP_INVALID;
@@ -2221,7 +2221,7 @@ skip_egress_gateway:
         struct iphdr *ip4 __maybe_unused;
         struct tcphdr *tcp __maybe_unused;
 
-        if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        if (!revalidate_data(ctx, &data, &data_end, &eth)) {
             trace_printk("cil_to_netdev: invalid eth data for NAT\n",
                         sizeof("cil_to_netdev: invalid eth data for NAT\n"));
             ret = DROP_INVALID;
@@ -2504,7 +2504,7 @@ int tail_ipv6_host_policy_ingress(struct __ctx_buff *ctx)
     struct tcphdr *tcp;
     void *data, *data_end;
 
-    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("tail_ipv6_host_policy_ingress: invalid eth data\n",
                     sizeof("tail_ipv6_host_policy_ingress: invalid eth data\n"));
         return DROP_INVALID;
@@ -2568,7 +2568,7 @@ int tail_ipv4_host_policy_ingress(struct __ctx_buff *ctx)
     struct tcphdr *tcp;
     void *data, *data_end;
 
-    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("tail_ipv4_host_policy_ingress: invalid eth data\n",
                     sizeof("tail_ipv4_host_policy_ingress: invalid eth data\n"));
         return DROP_INVALID;
@@ -2626,7 +2626,7 @@ to_host_from_lxc(struct __ctx_buff *ctx)
     struct iphdr *ip4 __maybe_unused;
     struct tcphdr *tcp __maybe_unused;
 
-    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("to_host_from_lxc: invalid eth data\n",
                     sizeof("to_host_from_lxc: invalid eth data\n"));
         return DROP_INVALID;
@@ -2745,7 +2745,7 @@ from_host_to_lxc(struct __ctx_buff *ctx, __s8 *ext_err)
     struct tcphdr *tcp __maybe_unused;
     __u16 proto = 0;
 
-    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("from_host_to_lxc: invalid eth data\n",
                     sizeof("from_host_to_lxc: invalid eth data\n"));
         return DROP_INVALID;
@@ -2838,7 +2838,7 @@ int handle_lxc_traffic(struct __ctx_buff *ctx __maybe_unused)
     struct ethhdr *eth;
     void *data, *data_end;
 
-    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("handle_lxc_traffic: invalid eth data\n",
                     sizeof("handle_lxc_traffic: invalid eth data\n"));
         return DROP_INVALID;
