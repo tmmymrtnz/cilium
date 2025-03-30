@@ -44,6 +44,7 @@
 #include "lib/encrypt.h"
 #include "lib/wireguard.h"
 #include "lib/vxlan.h"
+#include <linux/tcp.h>
 
 #define host_egress_policy_hook(ctx, src_sec_identity, ext_err) CTX_ACT_OK
 #define host_wg_encrypt_hook(ctx, proto) wg_maybe_redirect_to_encrypt(ctx, proto)
@@ -59,13 +60,22 @@ static __always_inline bool allow_vlan(__u32 __maybe_unused ifindex, __u32 __may
 static __always_inline int rewrite_dmac_to_host(struct __ctx_buff *ctx)
 {
     union macaddr cilium_net_mac = CILIUM_NET_MAC;
+    void *data, *data_end;
+    struct ethhdr *eth;
 
-    trace_printk("rewrite_dmac_to_host: entry\n",
-                sizeof("rewrite_dmac_to_host: entry\n"));
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("rewrite_dmac_to_host: invalid eth data\n",
+                    sizeof("rewrite_dmac_to_host: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("rewrite_dmac_to_host: entry SMAC=%pm DMAC=%pm\n",
+                sizeof("rewrite_dmac_to_host: entry SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
 
     if (eth_store_daddr(ctx, (__u8 *) &cilium_net_mac.addr, 0) < 0) {
-        trace_printk("rewrite_dmac_to_host: failed to write destination MAC\n",
-                    sizeof("rewrite_dmac_to_host: failed to write destination MAC\n"));
+        trace_printk("rewrite_dmac_to_host: failed to write DMAC=%pm\n",
+                    sizeof("rewrite_dmac_to_host: failed to write DMAC=%pm\n"),
+                    &cilium_net_mac.addr);
         return DROP_WRITE_ERROR;
     }
 
@@ -94,6 +104,20 @@ resolve_srcid_ipv6(struct __ctx_buff *ctx, struct ipv6hdr *ip6,
     __u32 src_id = WORLD_IPV6_ID;
     struct remote_endpoint_info *info = NULL;
     union v6addr *src;
+    void *data, *data_end;
+    struct ethhdr *eth;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("resolve_srcid_ipv6: invalid eth data\n",
+                    sizeof("resolve_srcid_ipv6: invalid eth data\n"));
+        return src_id; // Return default src_id on error
+    }
+    trace_printk("resolve_srcid_ipv6: SMAC=%pm DMAC=%pm\n",
+                sizeof("resolve_srcid_ipv6: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("resolve_srcid_ipv6: src=%pI6 dst=%pI6\n",
+                sizeof("resolve_srcid_ipv6: src=%pI6 dst=%pI6\n"),
+                &ip6->saddr, &ip6->daddr);
 
     trace_printk("resolve_srcid_ipv6: entry srcid_from_ipcache=%u from_host=%d\n",
                 sizeof("resolve_srcid_ipv6: entry srcid_from_ipcache=%u from_host=%d\n"),
@@ -145,18 +169,40 @@ handle_ipv6(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
     bool is_host_id = false;
 #endif
     void *data, *data_end;
+    struct ethhdr *eth;
     struct ipv6hdr *ip6;
-    int ret;
+    struct tcphdr *tcp;
+    int ret, l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("handle_ipv6: invalid eth data\n",
+                    sizeof("handle_ipv6: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
+        trace_printk("handle_ipv6: invalid IPv6 data\n",
+                    sizeof("handle_ipv6: invalid IPv6 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("handle_ipv6: SMAC=%pm DMAC=%pm\n",
+                sizeof("handle_ipv6: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("handle_ipv6: src=%pI6 dst=%pI6\n",
+                sizeof("handle_ipv6: src=%pI6 dst=%pI6\n"),
+                &ip6->saddr, &ip6->daddr);
+
+    l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+    if (ip6->nexthdr == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("handle_ipv6: TCP seq=%u\n",
+                    sizeof("handle_ipv6: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
     trace_printk("handle_ipv6: entry secctx=%u ipcache_srcid=%u from_host=%d\n",
                 sizeof("handle_ipv6: entry secctx=%u ipcache_srcid=%u from_host=%d\n"),
                 secctx, ipcache_srcid, from_host);
-
-    if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
-        trace_printk("handle_ipv6: invalid data\n",
-                    sizeof("handle_ipv6: invalid data\n"));
-        return DROP_INVALID;
-    }
 
     if (is_defined(ENABLE_HOST_FIREWALL) || !from_host) {
         __u8 nexthdr = ip6->nexthdr;
@@ -230,6 +276,9 @@ handle_ipv6(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
                         sizeof("handle_ipv6: invalid data in host fw check\n"));
             return DROP_INVALID;
         }
+        trace_printk("handle_ipv6: host fw check src=%pI6 dst=%pI6\n",
+                    sizeof("handle_ipv6: host fw check src=%pI6 dst=%pI6\n"),
+                    &ip6->saddr, &ip6->daddr);
         if (ipv6_host_policy_ingress_lookup(ctx, ip6, &ct_buffer)) {
             trace_printk("handle_ipv6: need ingress policy check\n",
                         sizeof("handle_ipv6: need ingress policy check\n"));
@@ -276,15 +325,43 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
     };
     __u32 __maybe_unused from_host_raw;
     void *data, *data_end;
+    struct ethhdr *eth;
     struct ipv6hdr *ip6;
+    struct tcphdr *tcp;
     union v6addr *dst;
     int l3_off = ETH_HLEN;
     struct remote_endpoint_info *info = NULL;
     struct endpoint_info *ep;
-    int ret;
+    int ret, l4_off;
     __u8 encrypt_key __maybe_unused = 0;
     __u32 magic = MARK_MAGIC_IDENTITY;
     bool from_proxy = false;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("handle_ipv6_cont: invalid eth data\n",
+                    sizeof("handle_ipv6_cont: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
+        trace_printk("handle_ipv6_cont: invalid IPv6 data\n",
+                    sizeof("handle_ipv6_cont: invalid IPv6 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("handle_ipv6_cont: SMAC=%pm DMAC=%pm\n",
+                sizeof("handle_ipv6_cont: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("handle_ipv6_cont: src=%pI6 dst=%pI6\n",
+                sizeof("handle_ipv6_cont: src=%pI6 dst=%pI6\n"),
+                &ip6->saddr, &ip6->daddr);
+
+    l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+    if (ip6->nexthdr == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("handle_ipv6_cont: TCP seq=%u\n",
+                    sizeof("handle_ipv6_cont: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
     trace_printk("handle_ipv6_cont: entry secctx=%u from_host=%d\n",
                 sizeof("handle_ipv6_cont: entry secctx=%u from_host=%d\n"),
@@ -301,12 +378,6 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
         magic = MARK_MAGIC_PROXY_EGRESS;
         trace_printk("handle_ipv6_cont: from egress proxy\n",
                     sizeof("handle_ipv6_cont: from egress proxy\n"));
-    }
-
-    if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
-        trace_printk("handle_ipv6_cont: invalid data\n",
-                    sizeof("handle_ipv6_cont: invalid data\n"));
-        return DROP_INVALID;
     }
 
 #ifdef ENABLE_HOST_FIREWALL
@@ -331,8 +402,8 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
 
         if (from_host) {
             bool is_host_id = from_host_raw & FROM_HOST_FLAG_HOST_ID;
-            trace_printk("handle_ipv6_cont: processing egress policy is_host_id=%d\n",
-                        sizeof("handle_ipv6_cont: processing egress policy is_host_id=%d\n"),
+            trace_printk("handle_ipv6_cont: egress policy is_host_id=%d\n",
+                        sizeof("handle_ipv6_cont: egress policy is_host_id=%d\n"),
                         is_host_id);
             ret = __ipv6_host_policy_egress(ctx, is_host_id, ip6, ct_buffer, &trace,
                             ext_err);
@@ -343,8 +414,8 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
                              ext_err);
         }
         if (IS_ERR(ret) || ret == CTX_ACT_REDIRECT) {
-            trace_printk("handle_ipv6_cont: policy processing returned %d\n",
-                        sizeof("handle_ipv6_cont: policy processing returned %d\n"),
+            trace_printk("handle_ipv6_cont: policy returned %d\n",
+                        sizeof("handle_ipv6_cont: policy returned %d\n"),
                         ret);
             return ret;
         }
@@ -354,8 +425,8 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
 #ifdef ENABLE_SRV6
     if (!from_host) {
         if (is_srv6_packet(ip6) && srv6_lookup_sid(&ip6->daddr)) {
-            trace_printk("handle_ipv6_cont: SRv6 packet, redirecting to decap\n",
-                        sizeof("handle_ipv6_cont: SRv6 packet, redirecting to decap\n"));
+            trace_printk("handle_ipv6_cont: SRv6 packet, redirecting\n",
+                        sizeof("handle_ipv6_cont: SRv6 packet, redirecting\n"));
             return tail_call_internal(ctx, CILIUM_CALL_SRV6_DECAP, ext_err);
         }
     }
@@ -382,6 +453,9 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
                         sizeof("handle_ipv6_cont: invalid data after rewrite\n"));
             return DROP_INVALID;
         }
+        trace_printk("handle_ipv6_cont: post-rewrite DMAC=%pm\n",
+                    sizeof("handle_ipv6_cont: post-rewrite DMAC=%pm\n"),
+                    eth->h_dest);
     }
 
     ep = lookup_ip6_endpoint(ip6);
@@ -396,8 +470,8 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
             bool l2_hdr_required = true;
             ret = maybe_add_l2_hdr(ctx, ep->ifindex, &l2_hdr_required);
             if (ret != 0) {
-                trace_printk("handle_ipv6_cont: failed to add L2 header ret=%d\n",
-                            sizeof("handle_ipv6_cont: failed to add L2 header ret=%d\n"),
+                trace_printk("handle_ipv6_cont: failed L2 header ret=%d\n",
+                            sizeof("handle_ipv6_cont: failed L2 header ret=%d\n"),
                             ret);
                 return ret;
             }
@@ -438,8 +512,8 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
         goto skip_tunnel;
 
     if (info && info->tunnel_endpoint != 0) {
-        trace_printk("handle_ipv6_cont: redirecting to tunnel endpoint=%u\n",
-                    sizeof("handle_ipv6_cont: redirecting to tunnel endpoint=%u\n"),
+        trace_printk("handle_ipv6_cont: tunnel endpoint=%u\n",
+                    sizeof("handle_ipv6_cont: tunnel endpoint=%u\n"),
                     info->tunnel_endpoint);
         return encap_and_redirect_with_nodeid(ctx, info->tunnel_endpoint,
                                               encrypt_key, secctx, info->sec_identity,
@@ -453,8 +527,8 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
                     sizeof("handle_ipv6_cont: attempting netdev encap\n"));
         ret = encap_and_redirect_netdev(ctx, &key, encrypt_key, secctx, &trace);
         if (ret != DROP_NO_TUNNEL_ENDPOINT) {
-            trace_printk("handle_ipv6_cont: encap_and_redirect_netdev returned %d\n",
-                        sizeof("handle_ipv6_cont: encap_and_redirect_netdev returned %d\n"),
+            trace_printk("handle_ipv6_cont: netdev encap returned %d\n",
+                        sizeof("handle_ipv6_cont: netdev encap returned %d\n"),
                         ret);
             return ret;
         }
@@ -491,8 +565,38 @@ static __always_inline int
 tail_handle_ipv6_cont(struct __ctx_buff *ctx, bool from_host)
 {
     __u32 src_sec_identity = ctx_load_and_clear_meta(ctx, CB_SRC_LABEL);
-    int ret;
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct ipv6hdr *ip6;
+    struct tcphdr *tcp;
+    int ret, l4_off;
     __s8 ext_err = 0;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("tail_handle_ipv6_cont: invalid eth data\n",
+                    sizeof("tail_handle_ipv6_cont: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
+        trace_printk("tail_handle_ipv6_cont: invalid IPv6 data\n",
+                    sizeof("tail_handle_ipv6_cont: invalid IPv6 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("tail_handle_ipv6_cont: SMAC=%pm DMAC=%pm\n",
+                sizeof("tail_handle_ipv6_cont: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("tail_handle_ipv6_cont: src=%pI6 dst=%pI6\n",
+                sizeof("tail_handle_ipv6_cont: src=%pI6 dst=%pI6\n"),
+                &ip6->saddr, &ip6->daddr);
+
+    l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+    if (ip6->nexthdr == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("tail_handle_ipv6_cont: TCP seq=%u\n",
+                    sizeof("tail_handle_ipv6_cont: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
     trace_printk("tail_handle_ipv6_cont: entry from_host=%d src_sec_identity=%u\n",
                 sizeof("tail_handle_ipv6_cont: entry from_host=%d src_sec_identity=%u\n"),
@@ -531,9 +635,39 @@ static __always_inline int
 tail_handle_ipv6(struct __ctx_buff *ctx, __u32 ipcache_srcid, const bool from_host)
 {
     __u32 src_sec_identity = ctx_load_and_clear_meta(ctx, CB_SRC_LABEL);
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct ipv6hdr *ip6;
+    struct tcphdr *tcp;
     bool punt_to_stack = false;
-    int ret;
+    int ret, l4_off;
     __s8 ext_err = 0;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("tail_handle_ipv6: invalid eth data\n",
+                    sizeof("tail_handle_ipv6: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
+        trace_printk("tail_handle_ipv6: invalid IPv6 data\n",
+                    sizeof("tail_handle_ipv6: invalid IPv6 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("tail_handle_ipv6: SMAC=%pm DMAC=%pm\n",
+                sizeof("tail_handle_ipv6: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("tail_handle_ipv6: src=%pI6 dst=%pI6\n",
+                sizeof("tail_handle_ipv6: src=%pI6 dst=%pI6\n"),
+                &ip6->saddr, &ip6->daddr);
+
+    l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+    if (ip6->nexthdr == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("tail_handle_ipv6: TCP seq=%u\n",
+                    sizeof("tail_handle_ipv6: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
     trace_printk("tail_handle_ipv6: entry ipcache_srcid=%u from_host=%d\n",
                 sizeof("tail_handle_ipv6: entry ipcache_srcid=%u from_host=%d\n"),
@@ -581,10 +715,42 @@ tail_handle_ipv6(struct __ctx_buff *ctx, __u32 ipcache_srcid, const bool from_ho
     return ret;
 }
 
+#ifdef ENABLE_IPV6
 __section_tail(CILIUM_MAP_CALLS, CILIUM_CALL_IPV6_FROM_HOST)
 int tail_handle_ipv6_from_host(struct __ctx_buff *ctx)
 {
     __u32 ipcache_srcid = 0;
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct ipv6hdr *ip6;
+    struct tcphdr *tcp;
+    int l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("tail_handle_ipv6_from_host: invalid eth data\n",
+                    sizeof("tail_handle_ipv6_from_host: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
+        trace_printk("tail_handle_ipv6_from_host: invalid IPv6 data\n",
+                    sizeof("tail_handle_ipv6_from_host: invalid IPv6 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("tail_handle_ipv6_from_host: SMAC=%pm DMAC=%pm\n",
+                sizeof("tail_handle_ipv6_from_host: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("tail_handle_ipv6_from_host: src=%pI6 dst=%pI6\n",
+                sizeof("tail_handle_ipv6_from_host: src=%pI6 dst=%pI6\n"),
+                &ip6->saddr, &ip6->daddr);
+
+    l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+    if (ip6->nexthdr == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("tail_handle_ipv6_from_host: TCP seq=%u\n",
+                    sizeof("tail_handle_ipv6_from_host: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
 #if defined(ENABLE_HOST_FIREWALL) && !defined(ENABLE_MASQUERADE_IPV6)
     ipcache_srcid = ctx_load_and_clear_meta(ctx, CB_IPCACHE_SRC_LABEL);
@@ -596,29 +762,83 @@ int tail_handle_ipv6_from_host(struct __ctx_buff *ctx)
 __section_tail(CILIUM_MAP_CALLS, CILIUM_CALL_IPV6_FROM_NETDEV)
 int tail_handle_ipv6_from_netdev(struct __ctx_buff *ctx)
 {
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct ipv6hdr *ip6;
+    struct tcphdr *tcp;
+    int l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("tail_handle_ipv6_from_netdev: invalid eth data\n",
+                    sizeof("tail_handle_ipv6_from_netdev: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
+        trace_printk("tail_handle_ipv6_from_netdev: invalid IPv6 data\n",
+                    sizeof("tail_handle_ipv6_from_netdev: invalid IPv6 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("tail_handle_ipv6_from_netdev: SMAC=%pm DMAC=%pm\n",
+                sizeof("tail_handle_ipv6_from_netdev: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("tail_handle_ipv6_from_netdev: src=%pI6 dst=%pI6\n",
+                sizeof("tail_handle_ipv6_from_netdev: src=%pI6 dst=%pI6\n"),
+                &ip6->saddr, &ip6->daddr);
+
+    l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+    if (ip6->nexthdr == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("tail_handle_ipv6_from_netdev: TCP seq=%u\n",
+                    sizeof("tail_handle_ipv6_from_netdev: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
+
     return tail_handle_ipv6(ctx, 0, false);
 }
 
-# ifdef ENABLE_HOST_FIREWALL
+#ifdef ENABLE_HOST_FIREWALL
 static __always_inline int
 handle_to_netdev_ipv6(struct __ctx_buff *ctx, __u32 src_sec_identity,
               struct trace_ctx *trace, __s8 *ext_err)
 {
     void *data, *data_end;
+    struct ethhdr *eth;
     struct ipv6hdr *ip6;
+    struct tcphdr *tcp;
     __u32 srcid = 0, ipcache_srcid = 0;
-    int hdrlen, ret;
+    int hdrlen, ret, l4_off;
     __u8 nexthdr;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("handle_to_netdev_ipv6: invalid eth data\n",
+                    sizeof("handle_to_netdev_ipv6: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data_pull(ctx, &data, &data_end, &ip6)) {
+        trace_printk("handle_to_netdev_ipv6: invalid IPv6 data\n",
+                    sizeof("handle_to_netdev_ipv6: invalid IPv6 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("handle_to_netdev_ipv6: SMAC=%pm DMAC=%pm\n",
+                sizeof("handle_to_netdev_ipv6: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("handle_to_netdev_ipv6: src=%pI6 dst=%pI6\n",
+                sizeof("handle_to_netdev_ipv6: src=%pI6 dst=%pI6\n"),
+                &ip6->saddr, &ip6->daddr);
+
+    l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+    if (ip6->nexthdr == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("handle_to_netdev_ipv6: TCP seq=%u\n",
+                    sizeof("handle_to_netdev_ipv6: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
     trace_printk("handle_to_netdev_ipv6: entry src_sec_identity=%u\n",
                 sizeof("handle_to_netdev_ipv6: entry src_sec_identity=%u\n"),
                 src_sec_identity);
-
-    if (!revalidate_data_pull(ctx, &data, &data_end, &ip6)) {
-        trace_printk("handle_to_netdev_ipv6: invalid data\n",
-                    sizeof("handle_to_netdev_ipv6: invalid data\n"));
-        return DROP_INVALID;
-    }
 
     nexthdr = ip6->nexthdr;
     hdrlen = ipv6_hdrlen(ctx, &nexthdr);
@@ -672,6 +892,20 @@ resolve_srcid_ipv4(struct __ctx_buff *ctx, struct iphdr *ip4,
 {
     __u32 src_id = WORLD_IPV4_ID, srcid_from_ipcache = srcid_from_proxy;
     struct remote_endpoint_info *info = NULL;
+    void *data, *data_end;
+    struct ethhdr *eth;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("resolve_srcid_ipv4: invalid eth data\n",
+                    sizeof("resolve_srcid_ipv4: invalid eth data\n"));
+        return src_id; // Return default src_id on error
+    }
+    trace_printk("resolve_srcid_ipv4: SMAC=%pm DMAC=%pm\n",
+                sizeof("resolve_srcid_ipv4: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("resolve_srcid_ipv4: src=%pI4 dst=%pI4\n",
+                sizeof("resolve_srcid_ipv4: src=%pI4 dst=%pI4\n"),
+                &ip4->saddr, &ip4->daddr);
 
     trace_printk("resolve_srcid_ipv4: entry srcid_from_proxy=%u from_host=%d\n",
                 sizeof("resolve_srcid_ipv4: entry srcid_from_proxy=%u from_host=%d\n"),
@@ -722,17 +956,40 @@ handle_ipv4(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
     bool is_host_id = false;
 #endif
     void *data, *data_end;
+    struct ethhdr *eth;
     struct iphdr *ip4;
+    struct tcphdr *tcp;
+    int l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("handle_ipv4: invalid eth data\n",
+                    sizeof("handle_ipv4: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+        trace_printk("handle_ipv4: invalid IPv4 data\n",
+                    sizeof("handle_ipv4: invalid IPv4 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("handle_ipv4: SMAC=%pm DMAC=%pm\n",
+                sizeof("handle_ipv4: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("handle_ipv4: src=%pI4 dst=%pI4\n",
+                sizeof("handle_ipv4: src=%pI4 dst=%pI4\n"),
+                &ip4->saddr, &ip4->daddr);
+
+    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+    if (ip4->protocol == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("handle_ipv4: TCP seq=%u\n",
+                    sizeof("handle_ipv4: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
     trace_printk("handle_ipv4: entry secctx=%u ipcache_srcid=%u from_host=%d\n",
                 sizeof("handle_ipv4: entry secctx=%u ipcache_srcid=%u from_host=%d\n"),
                 secctx, ipcache_srcid, from_host);
-
-    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
-        trace_printk("handle_ipv4: invalid data\n",
-                    sizeof("handle_ipv4: invalid data\n"));
-        return DROP_INVALID;
-    }
 
 #ifndef ENABLE_IPV4_FRAGMENTS
     if (ipv4_is_fragment(ip4)) {
@@ -795,6 +1052,9 @@ handle_ipv4(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
                         sizeof("handle_ipv4: invalid data in host fw check\n"));
             return DROP_INVALID;
         }
+        trace_printk("handle_ipv4: host fw check src=%pI4 dst=%pI4\n",
+                    sizeof("handle_ipv4: host fw check src=%pI4 dst=%pI4\n"),
+                    &ip4->saddr, &ip4->daddr);
         if (ipv4_host_policy_ingress_lookup(ctx, ip4, &ct_buffer)) {
             trace_printk("handle_ipv4: need ingress policy check\n",
                         sizeof("handle_ipv4: need ingress policy check\n"));
@@ -838,13 +1098,41 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
     };
     __u32 __maybe_unused from_host_raw;
     void *data, *data_end;
+    struct ethhdr *eth;
     struct iphdr *ip4;
+    struct tcphdr *tcp;
     struct remote_endpoint_info *info;
     struct endpoint_info *ep;
-    int ret;
+    int ret, l4_off;
     __u8 encrypt_key __maybe_unused = 0;
     __u32 magic = MARK_MAGIC_IDENTITY;
     bool from_proxy = false;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("handle_ipv4_cont: invalid eth data\n",
+                    sizeof("handle_ipv4_cont: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+        trace_printk("handle_ipv4_cont: invalid IPv4 data\n",
+                    sizeof("handle_ipv4_cont: invalid IPv4 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("handle_ipv4_cont: SMAC=%pm DMAC=%pm\n",
+                sizeof("handle_ipv4_cont: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("handle_ipv4_cont: src=%pI4 dst=%pI4\n",
+                sizeof("handle_ipv4_cont: src=%pI4 dst=%pI4\n"),
+                &ip4->saddr, &ip4->daddr);
+
+    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+    if (ip4->protocol == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("handle_ipv4_cont: TCP seq=%u\n",
+                    sizeof("handle_ipv4_cont: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
     trace_printk("handle_ipv4_cont: entry secctx=%u from_host=%d\n",
                 sizeof("handle_ipv4_cont: entry secctx=%u from_host=%d\n"),
@@ -861,12 +1149,6 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
         magic = MARK_MAGIC_PROXY_EGRESS;
         trace_printk("handle_ipv4_cont: from egress proxy\n",
                     sizeof("handle_ipv4_cont: from egress proxy\n"));
-    }
-
-    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
-        trace_printk("handle_ipv4_cont: invalid data\n",
-                    sizeof("handle_ipv4_cont: invalid data\n"));
-        return DROP_INVALID;
     }
 
 #ifdef ENABLE_HOST_FIREWALL
@@ -891,8 +1173,8 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
 
         if (from_host) {
             bool is_host_id = from_host_raw & FROM_HOST_FLAG_HOST_ID;
-            trace_printk("handle_ipv4_cont: processing egress policy is_host_id=%d\n",
-                        sizeof("handle_ipv4_cont: processing egress policy is_host_id=%d\n"),
+            trace_printk("handle_ipv4_cont: egress policy is_host_id=%d\n",
+                        sizeof("handle_ipv4_cont: egress policy is_host_id=%d\n"),
                         is_host_id);
             ret = __ipv4_host_policy_egress(ctx, is_host_id, ip4, ct_buffer, &trace,
                             ext_err);
@@ -903,8 +1185,8 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
                              ext_err);
         }
         if (IS_ERR(ret) || ret == CTX_ACT_REDIRECT) {
-            trace_printk("handle_ipv4_cont: policy processing returned %d\n",
-                        sizeof("handle_ipv4_cont: policy processing returned %d\n"),
+            trace_printk("handle_ipv4_cont: policy returned %d\n",
+                        sizeof("handle_ipv4_cont: policy returned %d\n"),
                         ret);
             return ret;
         }
@@ -932,6 +1214,9 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
                         sizeof("handle_ipv4_cont: invalid data after rewrite\n"));
             return DROP_INVALID;
         }
+        trace_printk("handle_ipv4_cont: post-rewrite DMAC=%pm\n",
+                    sizeof("handle_ipv4_cont: post-rewrite DMAC=%pm\n"),
+                    eth->h_dest);
     }
 
     ep = lookup_ip4_endpoint(ip4);
@@ -947,8 +1232,8 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
             bool l2_hdr_required = true;
             ret = maybe_add_l2_hdr(ctx, ep->ifindex, &l2_hdr_required);
             if (ret != 0) {
-                trace_printk("handle_ipv4_cont: failed to add L2 header ret=%d\n",
-                            sizeof("handle_ipv4_cont: failed to add L2 header ret=%d\n"),
+                trace_printk("handle_ipv4_cont: failed L2 header ret=%d\n",
+                            sizeof("handle_ipv4_cont: failed L2 header ret=%d\n"),
                             ret);
                 return ret;
             }
@@ -957,8 +1242,8 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
                 if (!____revalidate_data_pull(ctx, &data, &data_end,
                                               (void **)&ip4, sizeof(*ip4),
                                               false, l3_off)) {
-                    trace_printk("handle_ipv4_cont: invalid data after L2 header\n",
-                                sizeof("handle_ipv4_cont: invalid data after L2 header\n"));
+                    trace_printk("handle_ipv4_cont: invalid data after L2\n",
+                                sizeof("handle_ipv4_cont: invalid data after L2\n"));
                     return DROP_INVALID;
                 }
                 trace_printk("handle_ipv4_cont: L2 header added, l3_off=%d\n",
@@ -1025,8 +1310,8 @@ skip_vtep:
         goto skip_tunnel;
 
     if (info && info->tunnel_endpoint != 0) {
-        trace_printk("handle_ipv4_cont: redirecting to tunnel endpoint=%u\n",
-                    sizeof("handle_ipv4_cont: redirecting to tunnel endpoint=%u\n"),
+        trace_printk("handle_ipv4_cont: tunnel endpoint=%u\n",
+                    sizeof("handle_ipv4_cont: tunnel endpoint=%u\n"),
                     info->tunnel_endpoint);
         return encap_and_redirect_with_nodeid(ctx, info->tunnel_endpoint,
                                               encrypt_key, secctx, info->sec_identity,
@@ -1040,8 +1325,8 @@ skip_vtep:
         cilium_dbg(ctx, DBG_NETDEV_ENCAP4, key.ip4, secctx);
         ret = encap_and_redirect_netdev(ctx, &key, encrypt_key, secctx, &trace);
         if (ret != DROP_NO_TUNNEL_ENDPOINT) {
-            trace_printk("handle_ipv4_cont: encap_and_redirect_netdev returned %d\n",
-                        sizeof("handle_ipv4_cont: encap_and_redirect_netdev returned %d\n"),
+            trace_printk("handle_ipv4_cont: netdev encap returned %d\n",
+                        sizeof("handle_ipv4_cont: netdev encap returned %d\n"),
                         ret);
             return ret;
         }
@@ -1078,8 +1363,38 @@ static __always_inline int
 tail_handle_ipv4_cont(struct __ctx_buff *ctx, bool from_host)
 {
     __u32 src_sec_identity = ctx_load_and_clear_meta(ctx, CB_SRC_LABEL);
-    int ret;
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct iphdr *ip4;
+    struct tcphdr *tcp;
+    int ret, l4_off;
     __s8 ext_err = 0;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("tail_handle_ipv4_cont: invalid eth data\n",
+                    sizeof("tail_handle_ipv4_cont: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+        trace_printk("tail_handle_ipv4_cont: invalid IPv4 data\n",
+                    sizeof("tail_handle_ipv4_cont: invalid IPv4 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("tail_handle_ipv4_cont: SMAC=%pm DMAC=%pm\n",
+                sizeof("tail_handle_ipv4_cont: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("tail_handle_ipv4_cont: src=%pI4 dst=%pI4\n",
+                sizeof("tail_handle_ipv4_cont: src=%pI4 dst=%pI4\n"),
+                &ip4->saddr, &ip4->daddr);
+
+    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+    if (ip4->protocol == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("tail_handle_ipv4_cont: TCP seq=%u\n",
+                    sizeof("tail_handle_ipv4_cont: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
     trace_printk("tail_handle_ipv4_cont: entry from_host=%d src_sec_identity=%u\n",
                 sizeof("tail_handle_ipv4_cont: entry from_host=%d src_sec_identity=%u\n"),
@@ -1118,9 +1433,39 @@ static __always_inline int
 tail_handle_ipv4(struct __ctx_buff *ctx, __u32 ipcache_srcid, const bool from_host)
 {
     __u32 src_sec_identity = ctx_load_and_clear_meta(ctx, CB_SRC_LABEL);
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct iphdr *ip4;
+    struct tcphdr *tcp;
     bool punt_to_stack = false;
-    int ret;
+    int ret, l4_off;
     __s8 ext_err = 0;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("tail_handle_ipv4: invalid eth data\n",
+                    sizeof("tail_handle_ipv4: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+        trace_printk("tail_handle_ipv4: invalid IPv4 data\n",
+                    sizeof("tail_handle_ipv4: invalid IPv4 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("tail_handle_ipv4: SMAC=%pm DMAC=%pm\n",
+                sizeof("tail_handle_ipv4: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("tail_handle_ipv4: src=%pI4 dst=%pI4\n",
+                sizeof("tail_handle_ipv4: src=%pI4 dst=%pI4\n"),
+                &ip4->saddr, &ip4->daddr);
+
+    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+    if (ip4->protocol == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("tail_handle_ipv4: TCP seq=%u\n",
+                    sizeof("tail_handle_ipv4: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
     trace_printk("tail_handle_ipv4: entry ipcache_srcid=%u from_host=%d\n",
                 sizeof("tail_handle_ipv4: entry ipcache_srcid=%u from_host=%d\n"),
@@ -1167,11 +1512,44 @@ tail_handle_ipv4(struct __ctx_buff *ctx, __u32 ipcache_srcid, const bool from_ho
                 ret);
     return ret;
 }
+#endif
 
+#ifdef ENABLE_IPV4
 __section_tail(CILIUM_MAP_CALLS, CILIUM_CALL_IPV4_FROM_HOST)
 int tail_handle_ipv4_from_host(struct __ctx_buff *ctx)
 {
     __u32 ipcache_srcid = 0;
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct iphdr *ip4;
+    struct tcphdr *tcp;
+    int l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("tail_handle_ipv4_from_host: invalid eth data\n",
+                    sizeof("tail_handle_ipv4_from_host: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+        trace_printk("tail_handle_ipv4_from_host: invalid IPv4 data\n",
+                    sizeof("tail_handle_ipv4_from_host: invalid IPv4 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("tail_handle_ipv4_from_host: SMAC=%pm DMAC=%pm\n",
+                sizeof("tail_handle_ipv4_from_host: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("tail_handle_ipv4_from_host: src=%pI4 dst=%pI4\n",
+                sizeof("tail_handle_ipv4_from_host: src=%pI4 dst=%pI4\n"),
+                &ip4->saddr, &ip4->daddr);
+
+    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+    if (ip4->protocol == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("tail_handle_ipv4_from_host: TCP seq=%u\n",
+                    sizeof("tail_handle_ipv4_from_host: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
 #if defined(ENABLE_HOST_FIREWALL) && !defined(ENABLE_MASQUERADE_IPV4)
     ipcache_srcid = ctx_load_and_clear_meta(ctx, CB_IPCACHE_SRC_LABEL);
@@ -1183,6 +1561,38 @@ int tail_handle_ipv4_from_host(struct __ctx_buff *ctx)
 __section_tail(CILIUM_MAP_CALLS, CILIUM_CALL_IPV4_FROM_NETDEV)
 int tail_handle_ipv4_from_netdev(struct __ctx_buff *ctx)
 {
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct iphdr *ip4;
+    struct tcphdr *tcp;
+    int l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("tail_handle_ipv4_from_netdev: invalid eth data\n",
+                    sizeof("tail_handle_ipv4_from_netdev: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+        trace_printk("tail_handle_ipv4_from_netdev: invalid IPv4 data\n",
+                    sizeof("tail_handle_ipv4_from_netdev: invalid IPv4 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("tail_handle_ipv4_from_netdev: SMAC=%pm DMAC=%pm\n",
+                sizeof("tail_handle_ipv4_from_netdev: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("tail_handle_ipv4_from_netdev: src=%pI4 dst=%pI4\n",
+                sizeof("tail_handle_ipv4_from_netdev: src=%pI4 dst=%pI4\n"),
+                &ip4->saddr, &ip4->daddr);
+
+    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+    if (ip4->protocol == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("tail_handle_ipv4_from_netdev: TCP seq=%u\n",
+                    sizeof("tail_handle_ipv4_from_netdev: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
+
     return tail_handle_ipv4(ctx, 0, false);
 }
 
@@ -1192,18 +1602,41 @@ handle_to_netdev_ipv4(struct __ctx_buff *ctx, __u32 src_sec_identity,
               struct trace_ctx *trace, __s8 *ext_err)
 {
     void *data, *data_end;
+    struct ethhdr *eth;
     struct iphdr *ip4;
+    struct tcphdr *tcp;
     __u32 src_id = 0, ipcache_srcid = 0;
+    int ret, l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("handle_to_netdev_ipv4: invalid eth data\n",
+                    sizeof("handle_to_netdev_ipv4: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data_pull(ctx, &data, &data_end, &ip4)) {
+        trace_printk("handle_to_netdev_ipv4: invalid IPv4 data\n",
+                    sizeof("handle_to_netdev_ipv4: invalid IPv4 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("handle_to_netdev_ipv4: SMAC=%pm DMAC=%pm\n",
+                sizeof("handle_to_netdev_ipv4: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("handle_to_netdev_ipv4: src=%pI4 dst=%pI4\n",
+                sizeof("handle_to_netdev_ipv4: src=%pI4 dst=%pI4\n"),
+                &ip4->saddr, &ip4->daddr);
+
+    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+    if (ip4->protocol == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("handle_to_netdev_ipv4: TCP seq=%u\n",
+                    sizeof("handle_to_netdev_ipv4: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
     trace_printk("handle_to_netdev_ipv4: entry src_sec_identity=%u\n",
                 sizeof("handle_to_netdev_ipv4: entry src_sec_identity=%u\n"),
                 src_sec_identity);
-
-    if (!revalidate_data_pull(ctx, &data, &data_end, &ip4)) {
-        trace_printk("handle_to_netdev_ipv4: invalid data\n",
-                    sizeof("handle_to_netdev_ipv4: invalid data\n"));
-        return DROP_INVALID;
-    }
 
     if (src_sec_identity != HOST_ID)
         src_sec_identity = 0;
@@ -1233,8 +1666,20 @@ do_netdev_encrypt_encap(struct __ctx_buff *ctx, __be16 proto, __u32 src_id)
     };
     struct remote_endpoint_info *ep = NULL;
     void *data, *data_end;
+    struct ethhdr *eth;
     struct ipv6hdr *ip6 __maybe_unused;
     struct iphdr *ip4 __maybe_unused;
+    struct tcphdr *tcp __maybe_unused;
+    int ret, l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("do_netdev_encrypt_encap: invalid eth data\n",
+                    sizeof("do_netdev_encrypt_encap: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("do_netdev_encrypt_encap: SMAC=%pm DMAC=%pm\n",
+                sizeof("do_netdev_encrypt_encap: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
 
     trace_printk("do_netdev_encrypt_encap: entry proto=%u src_id=%u\n",
                 sizeof("do_netdev_encrypt_encap: entry proto=%u src_id=%u\n"),
@@ -1255,6 +1700,17 @@ do_netdev_encrypt_encap(struct __ctx_buff *ctx, __be16 proto, __u32 src_id)
                         sizeof("do_netdev_encrypt_encap: invalid IPv6 data\n"));
             return DROP_INVALID;
         }
+        trace_printk("do_netdev_encrypt_encap: src=%pI6 dst=%pI6\n",
+                    sizeof("do_netdev_encrypt_encap: src=%pI6 dst=%pI6\n"),
+                    &ip6->saddr, &ip6->daddr);
+        l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+        if (ip6->nexthdr == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("do_netdev_encrypt_encap: TCP seq=%u\n",
+                        sizeof("do_netdev_encrypt_encap: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
+        }
         ep = lookup_ip6_remote_endpoint((union v6addr *)&ip6->daddr, 0);
         trace_printk("do_netdev_encrypt_encap: IPv6 endpoint lookup %s\n",
                     sizeof("do_netdev_encrypt_encap: IPv6 endpoint lookup %s\n"),
@@ -1267,6 +1723,17 @@ do_netdev_encrypt_encap(struct __ctx_buff *ctx, __be16 proto, __u32 src_id)
             trace_printk("do_netdev_encrypt_encap: invalid IPv4 data\n",
                         sizeof("do_netdev_encrypt_encap: invalid IPv4 data\n"));
             return DROP_INVALID;
+        }
+        trace_printk("do_netdev_encrypt_encap: src=%pI4 dst=%pI4\n",
+                    sizeof("do_netdev_encrypt_encap: src=%pI4 dst=%pI4\n"),
+                    &ip4->saddr, &ip4->daddr);
+        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+        if (ip4->protocol == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("do_netdev_encrypt_encap: TCP seq=%u\n",
+                        sizeof("do_netdev_encrypt_encap: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
         }
         ep = lookup_ip4_remote_endpoint(ip4->daddr, 0);
         trace_printk("do_netdev_encrypt_encap: IPv4 endpoint lookup %s\n",
@@ -1302,9 +1769,20 @@ static __always_inline int handle_l2_announcement(struct __ctx_buff *ctx)
     __be32 tip;
     struct l2_responder_v4_key key;
     struct l2_responder_v4_stats *stats;
+    void *data, *data_end;
+    struct ethhdr *eth;
     int ret;
     __u32 index = RUNTIME_CONFIG_AGENT_LIVENESS;
     __u64 *time;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("handle_l2_announcement: invalid eth data\n",
+                    sizeof("handle_l2_announcement: invalid eth data\n"));
+        return CTX_ACT_OK;
+    }
+    trace_printk("handle_l2_announcement: SMAC=%pm DMAC=%pm\n",
+                sizeof("handle_l2_announcement: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
 
     trace_printk("handle_l2_announcement: entry\n",
                 sizeof("handle_l2_announcement: entry\n"));
@@ -1327,6 +1805,9 @@ static __always_inline int handle_l2_announcement(struct __ctx_buff *ctx)
                     sizeof("handle_l2_announcement: ARP validation failed\n"));
         return CTX_ACT_OK;
     }
+    trace_printk("handle_l2_announcement: SIP=%pI4 TIP=%pI4\n",
+                sizeof("handle_l2_announcement: SIP=%pI4 TIP=%pI4\n"),
+                &sip, &tip);
 
     key.ip4 = tip;
     key.ifindex = ctx->ingress_ifindex;
@@ -1348,25 +1829,36 @@ static __always_inline int handle_l2_announcement(struct __ctx_buff *ctx)
                 sizeof("handle_l2_announcement: returning ret=%d\n"),
                 ret);
     return ret;
-};
+}
 #endif
 
 static __always_inline int
 do_netdev(struct __ctx_buff *ctx, __u16 proto, __u32 __maybe_unused identity,
-      enum trace_point obs_point,  const bool __maybe_unused from_host)
+      enum trace_point obs_point, const bool __maybe_unused from_host)
 {
     struct trace_ctx trace = {
         .reason = TRACE_REASON_UNKNOWN,
         .monitor = TRACE_PAYLOAD_LEN,
     };
     __u32 __maybe_unused ipcache_srcid = 0;
-    void __maybe_unused *data, *data_end;
-    struct ipv6hdr __maybe_unused *ip6;
-    struct iphdr __maybe_unused *ip4;
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct ipv6hdr *ip6 __maybe_unused;
+    struct iphdr *ip4 __maybe_unused;
+    struct tcphdr *tcp __maybe_unused;
     int __maybe_unused hdrlen = 0;
     __u8 __maybe_unused next_proto = 0;
     __s8 __maybe_unused ext_err = 0;
-    int ret;
+    int ret, l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("do_netdev: invalid eth data\n",
+                    sizeof("do_netdev: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("do_netdev: SMAC=%pm DMAC=%pm\n",
+                sizeof("do_netdev: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
 
     trace_printk("do_netdev: entry proto=%u identity=%u from_host=%d\n",
                 sizeof("do_netdev: entry proto=%u identity=%u from_host=%d\n"),
@@ -1396,6 +1888,17 @@ do_netdev(struct __ctx_buff *ctx, __u16 proto, __u32 __maybe_unused identity,
                         sizeof("do_netdev: invalid IPv6 data\n"));
             return send_drop_notify_error(ctx, identity, DROP_INVALID,
                                          CTX_ACT_DROP, METRIC_INGRESS);
+        }
+        trace_printk("do_netdev: src=%pI6 dst=%pI6\n",
+                    sizeof("do_netdev: src=%pI6 dst=%pI6\n"),
+                    &ip6->saddr, &ip6->daddr);
+        l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+        if (ip6->nexthdr == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("do_netdev: TCP seq=%u\n",
+                        sizeof("do_netdev: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
         }
 
         identity = resolve_srcid_ipv6(ctx, ip6, identity, &ipcache_srcid, from_host);
@@ -1443,6 +1946,17 @@ do_netdev(struct __ctx_buff *ctx, __u16 proto, __u32 __maybe_unused identity,
                         sizeof("do_netdev: invalid IPv4 data\n"));
             return send_drop_notify_error(ctx, identity, DROP_INVALID,
                                          CTX_ACT_DROP, METRIC_INGRESS);
+        }
+        trace_printk("do_netdev: src=%pI4 dst=%pI4\n",
+                    sizeof("do_netdev: src=%pI4 dst=%pI4\n"),
+                    &ip4->saddr, &ip4->daddr);
+        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+        if (ip4->protocol == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("do_netdev: TCP seq=%u\n",
+                        sizeof("do_netdev: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
         }
 
         identity = resolve_srcid_ipv4(ctx, ip4, identity, &ipcache_srcid,
@@ -1513,7 +2027,18 @@ int cil_from_netdev(struct __ctx_buff *ctx)
 #ifdef ENABLE_NODEPORT_ACCELERATION
     __u32 flags = ctx_get_xfer(ctx, XFER_FLAGS);
 #endif
+    void *data, *data_end;
+    struct ethhdr *eth;
     int ret;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("cil_from_netdev: invalid eth data\n",
+                    sizeof("cil_from_netdev: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("cil_from_netdev: SMAC=%pm DMAC=%pm\n",
+                sizeof("cil_from_netdev: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
 
     trace_printk("cil_from_netdev: entry\n",
                 sizeof("cil_from_netdev: entry\n"));
@@ -1598,6 +2123,17 @@ int cil_from_host(struct __ctx_buff *ctx)
     int ret __maybe_unused;
     __be16 proto = 0;
     __u32 magic;
+    void *data, *data_end;
+    struct ethhdr *eth;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("cil_from_host: invalid eth data\n",
+                    sizeof("cil_from_host: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("cil_from_host: SMAC=%pm DMAC=%pm\n",
+                sizeof("cil_from_host: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
 
     trace_printk("cil_from_host: entry\n",
                 sizeof("cil_from_host: entry\n"));
@@ -1692,6 +2228,21 @@ int cil_to_netdev(struct __ctx_buff *ctx)
     __u32 vlan_id;
     int ret = CTX_ACT_OK;
     __s8 ext_err = 0;
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct ipv6hdr *ip6 __maybe_unused;
+    struct iphdr *ip4 __maybe_unused;
+    struct tcphdr *tcp __maybe_unused;
+    int l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("cil_to_netdev: invalid eth data\n",
+                    sizeof("cil_to_netdev: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("cil_to_netdev: SMAC=%pm DMAC=%pm\n",
+                sizeof("cil_to_netdev: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
 
     trace_printk("cil_to_netdev: entry magic=%u\n",
                 sizeof("cil_to_netdev: entry magic=%u\n"),
@@ -1769,6 +2320,22 @@ int cil_to_netdev(struct __ctx_buff *ctx)
 # endif
 # ifdef ENABLE_IPV6
     case bpf_htons(ETH_P_IPV6):
+        if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
+            trace_printk("cil_to_netdev: invalid IPv6 data\n",
+                        sizeof("cil_to_netdev: invalid IPv6 data\n"));
+            return DROP_INVALID;
+        }
+        trace_printk("cil_to_netdev: src=%pI6 dst=%pI6\n",
+                    sizeof("cil_to_netdev: src=%pI6 dst=%pI6\n"),
+                    &ip6->saddr, &ip6->daddr);
+        l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+        if (ip6->nexthdr == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("cil_to_netdev: TCP seq=%u\n",
+                        sizeof("cil_to_netdev: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
+        }
         trace_printk("cil_to_netdev: handling IPv6\n",
                     sizeof("cil_to_netdev: handling IPv6\n"));
         ret = handle_to_netdev_ipv6(ctx, src_sec_identity, &trace, &ext_err);
@@ -1776,6 +2343,22 @@ int cil_to_netdev(struct __ctx_buff *ctx)
 # endif
 # ifdef ENABLE_IPV4
     case bpf_htons(ETH_P_IP):
+        if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+            trace_printk("cil_to_netdev: invalid IPv4 data\n",
+                        sizeof("cil_to_netdev: invalid IPv4 data\n"));
+            return DROP_INVALID;
+        }
+        trace_printk("cil_to_netdev: src=%pI4 dst=%pI4\n",
+                    sizeof("cil_to_netdev: src=%pI4 dst=%pI4\n"),
+                    &ip4->saddr, &ip4->daddr);
+        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+        if (ip4->protocol == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("cil_to_netdev: TCP seq=%u\n",
+                        sizeof("cil_to_netdev: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
+        }
         trace_printk("cil_to_netdev: handling IPv4\n",
                     sizeof("cil_to_netdev: handling IPv4\n"));
         ret = handle_to_netdev_ipv4(ctx, src_sec_identity, &trace, &ext_err);
@@ -1800,6 +2383,97 @@ int cil_to_netdev(struct __ctx_buff *ctx)
 
 skip_host_firewall:
 #endif /* ENABLE_HOST_FIREWALL */
+
+    trace_printk("cil_to_netdev: returning ret=%d\n",
+                sizeof("cil_to_netdev: returning ret=%d\n"),
+                ret);
+    return ret;
+
+drop_err:
+    trace_printk("cil_to_netdev: dropping ret=%d ext_err=%d\n",
+                sizeof("cil_to_netdev: dropping ret=%d ext_err=%d\n"),
+                ret, ext_err);
+    return send_drop_notify_error_ext(ctx, src_sec_identity, ret, ext_err,
+                                     CTX_ACT_DROP, METRIC_EGRESS);
+}
+
+__section_entry
+int cil_to_netdev(struct __ctx_buff *ctx)
+{
+    __u32 magic = ctx->mark & MARK_MAGIC_HOST_MASK;
+    __u32 dst_sec_identity = UNKNOWN_ID;
+    __u32 src_sec_identity = UNKNOWN_ID;
+    struct trace_ctx trace = {
+        .reason = TRACE_REASON_UNKNOWN,
+        .monitor = 0,
+    };
+    __be16 __maybe_unused proto = 0;
+    __u32 vlan_id;
+    int ret = CTX_ACT_OK;
+    __s8 ext_err = 0;
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct ipv6hdr *ip6 __maybe_unused;
+    struct iphdr *ip4 __maybe_unused;
+    struct tcphdr *tcp __maybe_unused;
+    int l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("cil_to_netdev: invalid eth data\n",
+                    sizeof("cil_to_netdev: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("cil_to_netdev: SMAC=%pm DMAC=%pm\n",
+                sizeof("cil_to_netdev: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+
+    trace_printk("cil_to_netdev: entry magic=%u\n",
+                sizeof("cil_to_netdev: entry magic=%u\n"),
+                magic);
+
+    bpf_clear_meta(ctx);
+
+    if (magic == MARK_MAGIC_HOST || magic == MARK_MAGIC_OVERLAY)
+        src_sec_identity = HOST_ID;
+    else if (magic == MARK_MAGIC_IDENTITY)
+        src_sec_identity = get_identity(ctx);
+    trace_printk("cil_to_netdev: src_sec_identity=%u\n",
+                sizeof("cil_to_netdev: src_sec_identity=%u\n"),
+                src_sec_identity);
+
+    if (ctx->vlan_present) {
+        vlan_id = ctx->vlan_tci & 0xfff;
+        if (vlan_id) {
+            if (allow_vlan(ctx->ifindex, vlan_id)) {
+                trace_printk("cil_to_netdev: allowed VLAN %u\n",
+                            sizeof("cil_to_netdev: allowed VLAN %u\n"),
+                            vlan_id);
+                return CTX_ACT_OK;
+            }
+            ret = DROP_VLAN_FILTERED;
+            trace_printk("cil_to_netdev: VLAN %u filtered\n",
+                        sizeof("cil_to_netdev: VLAN %u filtered\n"),
+                        vlan_id);
+            goto drop_err;
+        }
+    }
+
+#if defined(ENABLE_L7_LB)
+    if (magic == MARK_MAGIC_PROXY_EGRESS_EPID) {
+        __u32 lxc_id = get_epid(ctx);
+        trace_printk("cil_to_netdev: handling L7 LB, lxc_id=%u\n",
+                    sizeof("cil_to_netdev: handling L7 LB, lxc_id=%u\n"),
+                    lxc_id);
+        ctx->mark = 0;
+        ret = tail_call_egress_policy(ctx, (__u16)lxc_id);
+        trace_printk("cil_to_netdev: tail_call_egress_policy returned %d\n",
+                    sizeof("cil_to_netdev: tail_call_egress_policy returned %d\n"),
+                    ret);
+        goto drop_err;
+    }
+#endif
+
+    validate_ethertype(ctx, &proto);
 
     ret = host_egress_policy_hook(ctx, src_sec_identity, &ext_err);
     if (IS_ERR(ret)) {
@@ -1877,7 +2551,6 @@ skip_host_firewall:
 
 #ifdef ENABLE_EGRESS_GATEWAY_COMMON
     {
-        void *data, *data_end;
         struct iphdr *ip4;
         struct ipv4_ct_tuple tuple = {};
         int l4_off;
@@ -1908,6 +2581,17 @@ skip_host_firewall:
             trace_printk("cil_to_netdev: invalid data for egress gateway\n",
                         sizeof("cil_to_netdev: invalid data for egress gateway\n"));
             goto drop_err;
+        }
+        trace_printk("cil_to_netdev: src=%pI4 dst=%pI4\n",
+                    sizeof("cil_to_netdev: src=%pI4 dst=%pI4\n"),
+                    &ip4->saddr, &ip4->daddr);
+        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+        if (ip4->protocol == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("cil_to_netdev: TCP seq=%u\n",
+                        sizeof("cil_to_netdev: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
         }
 
         tuple.nexthdr = ip4->protocol;
@@ -2019,6 +2703,21 @@ int cil_to_host(struct __ctx_buff *ctx)
     bool traced = false;
     __u32 src_id = 0;
     __s8 ext_err = 0;
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct ipv6hdr *ip6 __maybe_unused;
+    struct iphdr *ip4 __maybe_unused;
+    struct tcphdr *tcp __maybe_unused;
+    int l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("cil_to_host: invalid eth data\n",
+                    sizeof("cil_to_host: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("cil_to_host: SMAC=%pm DMAC=%pm\n",
+                sizeof("cil_to_host: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
 
     trace_printk("cil_to_host: entry magic=%u\n",
                 sizeof("cil_to_host: entry magic=%u\n"),
@@ -2089,6 +2788,23 @@ skip_ipsec_nodeport_revdnat:
 # endif
 # ifdef ENABLE_IPV6
     case bpf_htons(ETH_P_IPV6):
+        if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
+            ret = DROP_INVALID;
+            trace_printk("cil_to_host: invalid IPv6 data\n",
+                        sizeof("cil_to_host: invalid IPv6 data\n"));
+            goto out;
+        }
+        trace_printk("cil_to_host: src=%pI6 dst=%pI6\n",
+                    sizeof("cil_to_host: src=%pI6 dst=%pI6\n"),
+                    &ip6->saddr, &ip6->daddr);
+        l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+        if (ip6->nexthdr == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("cil_to_host: TCP seq=%u\n",
+                        sizeof("cil_to_host: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
+        }
         trace_printk("cil_to_host: handling IPv6\n",
                     sizeof("cil_to_host: handling IPv6\n"));
         ctx_store_meta(ctx, CB_SRC_LABEL, src_id);
@@ -2098,6 +2814,23 @@ skip_ipsec_nodeport_revdnat:
 # endif
 # ifdef ENABLE_IPV4
     case bpf_htons(ETH_P_IP):
+        if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+            ret = DROP_INVALID;
+            trace_printk("cil_to_host: invalid IPv4 data\n",
+                        sizeof("cil_to_host: invalid IPv4 data\n"));
+            goto out;
+        }
+        trace_printk("cil_to_host: src=%pI4 dst=%pI4\n",
+                    sizeof("cil_to_host: src=%pI4 dst=%pI4\n"),
+                    &ip4->saddr, &ip4->daddr);
+        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+        if (ip4->protocol == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("cil_to_host: TCP seq=%u\n",
+                        sizeof("cil_to_host: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
+        }
         trace_printk("cil_to_host: handling IPv4\n",
                     sizeof("cil_to_host: handling IPv4\n"));
         ctx_store_meta(ctx, CB_SRC_LABEL, src_id);
@@ -2155,6 +2888,36 @@ int tail_ipv6_host_policy_ingress(struct __ctx_buff *ctx)
     bool traced = ctx_load_meta(ctx, CB_TRACED);
     int ret;
     __s8 ext_err = 0;
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct ipv6hdr *ip6;
+    struct tcphdr *tcp;
+    int l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("tail_ipv6_host_policy_ingress: invalid eth data\n",
+                    sizeof("tail_ipv6_host_policy_ingress: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
+        trace_printk("tail_ipv6_host_policy_ingress: invalid IPv6 data\n",
+                    sizeof("tail_ipv6_host_policy_ingress: invalid IPv6 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("tail_ipv6_host_policy_ingress: SMAC=%pm DMAC=%pm\n",
+                sizeof("tail_ipv6_host_policy_ingress: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("tail_ipv6_host_policy_ingress: src=%pI6 dst=%pI6\n",
+                sizeof("tail_ipv6_host_policy_ingress: src=%pI6 dst=%pI6\n"),
+                &ip6->saddr, &ip6->daddr);
+    l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+    if (ip6->nexthdr == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("tail_ipv6_host_policy_ingress: TCP seq=%u\n",
+                    sizeof("tail_ipv6_host_policy_ingress: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
     trace_printk("tail_ipv6_host_policy_ingress: entry src_id=%u traced=%d\n",
                 sizeof("tail_ipv6_host_policy_ingress: entry src_id=%u traced=%d\n"),
@@ -2197,6 +2960,36 @@ int tail_ipv4_host_policy_ingress(struct __ctx_buff *ctx)
     bool traced = ctx_load_meta(ctx, CB_TRACED);
     int ret;
     __s8 ext_err = 0;
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct iphdr *ip4;
+    struct tcphdr *tcp;
+    int l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("tail_ipv4_host_policy_ingress: invalid eth data\n",
+                    sizeof("tail_ipv4_host_policy_ingress: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+        trace_printk("tail_ipv4_host_policy_ingress: invalid IPv4 data\n",
+                    sizeof("tail_ipv4_host_policy_ingress: invalid IPv4 data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("tail_ipv4_host_policy_ingress: SMAC=%pm DMAC=%pm\n",
+                sizeof("tail_ipv4_host_policy_ingress: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+    trace_printk("tail_ipv4_host_policy_ingress: src=%pI4 dst=%pI4\n",
+                sizeof("tail_ipv4_host_policy_ingress: src=%pI4 dst=%pI4\n"),
+                &ip4->saddr, &ip4->daddr);
+    l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+    if (ip4->protocol == IPPROTO_TCP &&
+        revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("tail_ipv4_host_policy_ingress: TCP seq=%u\n",
+                    sizeof("tail_ipv4_host_policy_ingress: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
 
     trace_printk("tail_ipv4_host_policy_ingress: entry src_id=%u traced=%d\n",
                 sizeof("tail_ipv4_host_policy_ingress: entry src_id=%u traced=%d\n"),
@@ -2232,6 +3025,21 @@ to_host_from_lxc(struct __ctx_buff *ctx)
     int ret = CTX_ACT_OK;
     __s8 ext_err = 0;
     __u16 proto = 0;
+    void *data, *data_end;
+    struct ethhdr *eth;
+    struct ipv6hdr *ip6 __maybe_unused;
+    struct iphdr *ip4 __maybe_unused;
+    struct tcphdr *tcp __maybe_unused;
+    int l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("to_host_from_lxc: invalid eth data\n",
+                    sizeof("to_host_from_lxc: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("to_host_from_lxc: SMAC=%pm DMAC=%pm\n",
+                sizeof("to_host_from_lxc: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
 
     trace_printk("to_host_from_lxc: entry\n",
                 sizeof("to_host_from_lxc: entry\n"));
@@ -2254,6 +3062,23 @@ to_host_from_lxc(struct __ctx_buff *ctx)
 # endif
 # ifdef ENABLE_IPV6
     case bpf_htons(ETH_P_IPV6):
+        if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
+            ret = DROP_INVALID;
+            trace_printk("to_host_from_lxc: invalid IPv6 data\n",
+                        sizeof("to_host_from_lxc: invalid IPv6 data\n"));
+            goto out;
+        }
+        trace_printk("to_host_from_lxc: src=%pI6 dst=%pI6\n",
+                    sizeof("to_host_from_lxc: src=%pI6 dst=%pI6\n"),
+                    &ip6->saddr, &ip6->daddr);
+        l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+        if (ip6->nexthdr == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("to_host_from_lxc: TCP seq=%u\n",
+                        sizeof("to_host_from_lxc: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
+        }
         trace_printk("to_host_from_lxc: handling IPv6\n",
                     sizeof("to_host_from_lxc: handling IPv6\n"));
         ctx_store_meta(ctx, CB_SRC_LABEL, 0);
@@ -2268,6 +3093,23 @@ to_host_from_lxc(struct __ctx_buff *ctx)
 # endif
 # ifdef ENABLE_IPV4
     case bpf_htons(ETH_P_IP):
+        if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+            ret = DROP_INVALID;
+            trace_printk("to_host_from_lxc: invalid IPv4 data\n",
+                        sizeof("to_host_from_lxc: invalid IPv4 data\n"));
+            goto out;
+        }
+        trace_printk("to_host_from_lxc: src=%pI4 dst=%pI4\n",
+                    sizeof("to_host_from_lxc: src=%pI4 dst=%pI4\n"),
+                    &ip4->saddr, &ip4->daddr);
+        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+        if (ip4->protocol == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("to_host_from_lxc: TCP seq=%u\n",
+                        sizeof("to_host_from_lxc: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
+        }
         trace_printk("to_host_from_lxc: handling IPv4\n",
                     sizeof("to_host_from_lxc: handling IPv4\n"));
         ctx_store_meta(ctx, CB_SRC_LABEL, 0);
@@ -2311,9 +3153,21 @@ from_host_to_lxc(struct __ctx_buff *ctx, __s8 *ext_err)
     };
     int ret = CTX_ACT_OK;
     void *data, *data_end;
+    struct ethhdr *eth;
     struct iphdr *ip4 __maybe_unused;
     struct ipv6hdr *ip6 __maybe_unused;
+    struct tcphdr *tcp __maybe_unused;
     __u16 proto = 0;
+    int l4_off;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("from_host_to_lxc: invalid eth data\n",
+                    sizeof("from_host_to_lxc: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("from_host_to_lxc: SMAC=%pm DMAC=%pm\n",
+                sizeof("from_host_to_lxc: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
 
     trace_printk("from_host_to_lxc: entry\n",
                 sizeof("from_host_to_lxc: entry\n"));
@@ -2340,6 +3194,17 @@ from_host_to_lxc(struct __ctx_buff *ctx, __s8 *ext_err)
                         sizeof("from_host_to_lxc: invalid IPv6 data\n"));
             return DROP_INVALID;
         }
+        trace_printk("from_host_to_lxc: src=%pI6 dst=%pI6\n",
+                    sizeof("from_host_to_lxc: src=%pI6 dst=%pI6\n"),
+                    &ip6->saddr, &ip6->daddr);
+        l4_off = ETH_HLEN + ipv6_hdrlen(ctx, &ip6->nexthdr);
+        if (ip6->nexthdr == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("from_host_to_lxc: TCP seq=%u\n",
+                        sizeof("from_host_to_lxc: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
+        }
         trace_printk("from_host_to_lxc: handling IPv6\n",
                     sizeof("from_host_to_lxc: handling IPv6\n"));
         ret = ipv6_host_policy_egress(ctx, HOST_ID, 0, ip6, &trace, ext_err);
@@ -2351,6 +3216,17 @@ from_host_to_lxc(struct __ctx_buff *ctx, __s8 *ext_err)
             trace_printk("from_host_to_lxc: invalid IPv4 data\n",
                         sizeof("from_host_to_lxc: invalid IPv4 data\n"));
             return DROP_INVALID;
+        }
+        trace_printk("from_host_to_lxc: src=%pI4 dst=%pI4\n",
+                    sizeof("from_host_to_lxc: src=%pI4 dst=%pI4\n"),
+                    &ip4->saddr, &ip4->daddr);
+        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+        if (ip4->protocol == IPPROTO_TCP &&
+            revalidate_data(ctx, &data, &data_end, &tcp) &&
+            (void *)tcp + sizeof(*tcp) <= data_end) {
+            trace_printk("from_host_to_lxc: TCP seq=%u\n",
+                        sizeof("from_host_to_lxc: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
         }
         trace_printk("from_host_to_lxc: handling IPv4\n",
                     sizeof("from_host_to_lxc: handling IPv4\n"));
@@ -2380,6 +3256,17 @@ int handle_lxc_traffic(struct __ctx_buff *ctx __maybe_unused)
     __u32 lxc_id;
     int ret;
     __s8 ext_err = 0;
+    void *data, *data_end;
+    struct ethhdr *eth;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("handle_lxc_traffic: invalid eth data\n",
+                    sizeof("handle_lxc_traffic: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("handle_lxc_traffic: SMAC=%pm DMAC=%pm\n",
+                sizeof("handle_lxc_traffic: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
 
     trace_printk("handle_lxc_traffic: entry from_host=%d\n",
                 sizeof("handle_lxc_traffic: entry from_host=%d\n"),
@@ -2414,6 +3301,18 @@ int handle_lxc_traffic(struct __ctx_buff *ctx __maybe_unused)
                 ret);
     return ret;
 #else
+    void *data, *data_end;
+    struct ethhdr *eth;
+
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
+        trace_printk("handle_lxc_traffic: invalid eth data\n",
+                    sizeof("handle_lxc_traffic: invalid eth data\n"));
+        return DROP_INVALID;
+    }
+    trace_printk("handle_lxc_traffic: SMAC=%pm DMAC=%pm\n",
+                sizeof("handle_lxc_traffic: SMAC=%pm DMAC=%pm\n"),
+                eth->h_source, eth->h_dest);
+
     trace_printk("handle_lxc_traffic: no host firewall, returning 0\n",
                 sizeof("handle_lxc_traffic: no host firewall, returning 0\n"));
     return 0;
