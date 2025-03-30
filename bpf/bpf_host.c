@@ -2114,7 +2114,7 @@ int cil_from_host(struct __ctx_buff *ctx)
     void *data, *data_end;
     struct ethhdr *eth;
 
-    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
         trace_printk("cil_from_host: invalid eth data\n",
                     sizeof("cil_from_host: invalid eth data\n"));
         return DROP_INVALID;
@@ -2206,13 +2206,8 @@ __section_entry
 int cil_to_netdev(struct __ctx_buff *ctx)
 {
     __u32 magic = ctx->mark & MARK_MAGIC_HOST_MASK;
-    __u32 dst_sec_identity = UNKNOWN_ID;
     __u32 src_sec_identity = UNKNOWN_ID;
-    struct trace_ctx trace = {
-        .reason = TRACE_REASON_UNKNOWN,
-        .monitor = 0,
-    };
-    __be16 __maybe_unused proto = 0;
+    __be16 proto = 0; /* Removed __maybe_unused since we use it */
     __u32 vlan_id;
     int ret = CTX_ACT_OK;
     __s8 ext_err = 0;
@@ -2222,7 +2217,7 @@ int cil_to_netdev(struct __ctx_buff *ctx)
     struct iphdr *ip4 __maybe_unused;
     struct tcphdr *tcp __maybe_unused;
 
-    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
+    if (!revalidate_data(ctx, &data, &data_end, ð)) {
         trace_printk("cil_to_netdev: invalid eth data\n",
                     sizeof("cil_to_netdev: invalid eth data\n"));
         return DROP_INVALID;
@@ -2277,24 +2272,94 @@ int cil_to_netdev(struct __ctx_buff *ctx)
     }
 #endif
 
-    validate_ethertype(ctx, &proto);
+    if (!validate_ethertype(ctx, &proto)) {
+        ret = DROP_UNSUPPORTED_L2;
+        trace_printk("cil_to_netdev: unsupported L2 proto=%u\n",
+                    sizeof("cil_to_netdev: unsupported L2 proto=%u\n"),
+                    proto);
+        goto drop_err;
+    }
     trace_printk("cil_to_netdev: proto=%u\n",
                 sizeof("cil_to_netdev: proto=%u\n"),
                 proto);
+
+    ret = host_egress_policy_hook(ctx, src_sec_identity, &ext_err);
+    if (IS_ERR(ret)) {
+        trace_printk("cil_to_netdev: host_egress_policy_hook error ret=%d\n",
+                    sizeof("cil_to_netdev: host_egress_policy_hook error ret=%d\n"),
+                    ret);
+        goto drop_err;
+    }
+
+#if defined(ENABLE_BANDWIDTH_MANAGER)
+    ret = edt_sched_departure(ctx, proto);
+    if (ret == CTX_ACT_DROP) {
+        trace_printk("cil_to_netdev: rate-limited drop\n",
+                    sizeof("cil_to_netdev: rate-limited drop\n"));
+        update_metrics(ctx_full_len(ctx), METRIC_EGRESS, -DROP_EDT_HORIZON);
+        return ret;
+    }
+#endif
+
+#if defined(ENABLE_ENCRYPTED_OVERLAY)
+    if (ctx_is_overlay(ctx) && get_identity(ctx) == ENCRYPTED_OVERLAY_ID) {
+        trace_printk("cil_to_netdev: handling encrypted overlay\n",
+                    sizeof("cil_to_netdev: handling encrypted overlay\n"));
+        ret = encrypt_overlay_and_redirect(ctx);
+        if (ret == CTX_ACT_REDIRECT) {
+            struct trace_ctx trace = { /* Declare here where used */
+                .reason = TRACE_REASON_ENCRYPT_OVERLAY,
+                .monitor = 0,
+            };
+            send_trace_notify(ctx, TRACE_TO_STACK, src_sec_identity,
+                             UNKNOWN_ID, /* dst_sec_identity unused elsewhere */
+                             TRACE_EP_ID_UNKNOWN, THIS_INTERFACE_IFINDEX,
+                             trace.reason, 0);
+            trace_printk("cil_to_netdev: redirected to stack\n",
+                        sizeof("cil_to_netdev: redirected to stack\n"));
+            return ret;
+        }
+        if (IS_ERR(ret))
+            goto drop_err;
+    }
+#endif
+
+#ifdef ENABLE_WIREGUARD
+    if (!ctx_mark_is_wireguard(ctx)) {
+        trace_printk("cil_to_netdev: checking WireGuard\n",
+                    sizeof("cil_to_netdev: checking WireGuard\n"));
+        ret = host_wg_encrypt_hook(ctx, proto);
+        if (ret == CTX_ACT_REDIRECT) {
+            trace_printk("cil_to_netdev: WireGuard redirect\n",
+                        sizeof("cil_to_netdev: WireGuard redirect\n"));
+            return ret;
+        } else if (IS_ERR(ret))
+            goto drop_err;
+    } else {
+        struct trace_ctx trace = { /* Declare here where used */
+            .reason = TRACE_REASON_ENCRYPTED,
+            .monitor = 0,
+        };
+        trace_printk("cil_to_netdev: packet already encrypted\n",
+                    sizeof("cil_to_netdev: packet already encrypted\n"));
+        /* trace.reason used implicitly in logic */
+    }
+
+#if defined(ENCRYPTION_STRICT_MODE)
+    if (!strict_allow(ctx, proto)) {
+        ret = DROP_UNENCRYPTED_TRAFFIC;
+        trace_printk("cil_to_netdev: dropping unencrypted traffic\n",
+                    sizeof("cil_to_netdev: dropping unencrypted traffic\n"));
+        goto drop_err;
+    }
+#endif
+#endif
 
 #ifdef ENABLE_HOST_FIREWALL
     if (ctx_snat_done(ctx)) {
         trace_printk("cil_to_netdev: SNAT done, skipping host firewall\n",
                     sizeof("cil_to_netdev: SNAT done, skipping host firewall\n"));
         goto skip_host_firewall;
-    }
-
-    if (!eth_is_supported_ethertype(proto)) {
-        ret = DROP_UNSUPPORTED_L2;
-        trace_printk("cil_to_netdev: unsupported L2 proto=%u\n",
-                    sizeof("cil_to_netdev: unsupported L2 proto=%u\n"),
-                    proto);
-        goto drop_err;
     }
 
     switch (proto) {
@@ -2305,7 +2370,7 @@ int cil_to_netdev(struct __ctx_buff *ctx)
                     sizeof("cil_to_netdev: handling ARP\n"));
         break;
 # endif
-# ifdef ENABLE_IPV6
+# ifdef ENABLE_IPV6nev
     case bpf_htons(ETH_P_IPV6):
         if (!revalidate_data(ctx, &data, &data_end, &ip6)) {
             trace_printk("cil_to_netdev: invalid IPv6 data\n",
@@ -2324,7 +2389,7 @@ int cil_to_netdev(struct __ctx_buff *ctx)
         }
         trace_printk("cil_to_netdev: handling IPv6\n",
                     sizeof("cil_to_netdev: handling IPv6\n"));
-        ret = handle_to_netdev_ipv6(ctx, src_sec_identity, &trace, &ext_err);
+        ret = handle_to_netdev_ipv6(ctx, src_sec_identity, &ext_err);
         break;
 # endif
 # ifdef ENABLE_IPV4
@@ -2346,7 +2411,7 @@ int cil_to_netdev(struct __ctx_buff *ctx)
         }
         trace_printk("cil_to_netdev: handling IPv4\n",
                     sizeof("cil_to_netdev: handling IPv4\n"));
-        ret = handle_to_netdev_ipv4(ctx, src_sec_identity, &trace, &ext_err);
+        ret = handle_to_netdev_ipv4(ctx, src_sec_identity, &ext_err);
         break;
 # endif
     default:
@@ -2381,148 +2446,6 @@ drop_err:
     return send_drop_notify_error_ext(ctx, src_sec_identity, ret, ext_err,
                                      CTX_ACT_DROP, METRIC_EGRESS);
 }
-
-__section_entry
-int cil_to_netdev(struct __ctx_buff *ctx)
-{
-    __u32 magic = ctx->mark & MARK_MAGIC_HOST_MASK;
-    __u32 dst_sec_identity = UNKNOWN_ID;
-    __u32 src_sec_identity = UNKNOWN_ID;
-    struct trace_ctx trace = {
-        .reason = TRACE_REASON_UNKNOWN,
-        .monitor = 0,
-    };
-    __be16 __maybe_unused proto = 0;
-    __u32 vlan_id;
-    int ret = CTX_ACT_OK;
-    __s8 ext_err = 0;
-    void *data, *data_end;
-    struct ethhdr *eth;
-    struct ipv6hdr *ip6 __maybe_unused;
-    struct iphdr *ip4 __maybe_unused;
-    struct tcphdr *tcp __maybe_unused;
-    int l4_off;
-
-    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
-        trace_printk("cil_to_netdev: invalid eth data\n",
-                    sizeof("cil_to_netdev: invalid eth data\n"));
-        return DROP_INVALID;
-    }
-    trace_printk("cil_to_netdev: SMAC=%pm DMAC=%pm\n",
-                sizeof("cil_to_netdev: SMAC=%pm DMAC=%pm\n"),
-                eth->h_source, eth->h_dest);
-
-    trace_printk("cil_to_netdev: entry magic=%u\n",
-                sizeof("cil_to_netdev: entry magic=%u\n"),
-                magic);
-
-    bpf_clear_meta(ctx);
-
-    if (magic == MARK_MAGIC_HOST || magic == MARK_MAGIC_OVERLAY)
-        src_sec_identity = HOST_ID;
-    else if (magic == MARK_MAGIC_IDENTITY)
-        src_sec_identity = get_identity(ctx);
-    trace_printk("cil_to_netdev: src_sec_identity=%u\n",
-                sizeof("cil_to_netdev: src_sec_identity=%u\n"),
-                src_sec_identity);
-
-    if (ctx->vlan_present) {
-        vlan_id = ctx->vlan_tci & 0xfff;
-        if (vlan_id) {
-            if (allow_vlan(ctx->ifindex, vlan_id)) {
-                trace_printk("cil_to_netdev: allowed VLAN %u\n",
-                            sizeof("cil_to_netdev: allowed VLAN %u\n"),
-                            vlan_id);
-                return CTX_ACT_OK;
-            }
-            ret = DROP_VLAN_FILTERED;
-            trace_printk("cil_to_netdev: VLAN %u filtered\n",
-                        sizeof("cil_to_netdev: VLAN %u filtered\n"),
-                        vlan_id);
-            goto drop_err;
-        }
-    }
-
-#if defined(ENABLE_L7_LB)
-    if (magic == MARK_MAGIC_PROXY_EGRESS_EPID) {
-        __u32 lxc_id = get_epid(ctx);
-        trace_printk("cil_to_netdev: handling L7 LB, lxc_id=%u\n",
-                    sizeof("cil_to_netdev: handling L7 LB, lxc_id=%u\n"),
-                    lxc_id);
-        ctx->mark = 0;
-        ret = tail_call_egress_policy(ctx, (__u16)lxc_id);
-        trace_printk("cil_to_netdev: tail_call_egress_policy returned %d\n",
-                    sizeof("cil_to_netdev: tail_call_egress_policy returned %d\n"),
-                    ret);
-        goto drop_err;
-    }
-#endif
-
-    validate_ethertype(ctx, &proto);
-
-    ret = host_egress_policy_hook(ctx, src_sec_identity, &ext_err);
-    if (IS_ERR(ret)) {
-        trace_printk("cil_to_netdev: host_egress_policy_hook error ret=%d\n",
-                    sizeof("cil_to_netdev: host_egress_policy_hook error ret=%d\n"),
-                    ret);
-        goto drop_err;
-    }
-
-#if defined(ENABLE_BANDWIDTH_MANAGER)
-    ret = edt_sched_departure(ctx, proto);
-    if (ret == CTX_ACT_DROP) {
-        trace_printk("cil_to_netdev: rate-limited drop\n",
-                    sizeof("cil_to_netdev: rate-limited drop\n"));
-        update_metrics(ctx_full_len(ctx), METRIC_EGRESS, -DROP_EDT_HORIZON);
-        return ret;
-    }
-#endif
-
-#if defined(ENABLE_ENCRYPTED_OVERLAY)
-    if (ctx_is_overlay(ctx) && get_identity(ctx) == ENCRYPTED_OVERLAY_ID) {
-        trace_printk("cil_to_netdev: handling encrypted overlay\n",
-                    sizeof("cil_to_netdev: handling encrypted overlay\n"));
-        ret = encrypt_overlay_and_redirect(ctx);
-        if (ret == CTX_ACT_REDIRECT) {
-            send_trace_notify(ctx, TRACE_TO_STACK, src_sec_identity,
-                             dst_sec_identity,
-                             TRACE_EP_ID_UNKNOWN, THIS_INTERFACE_IFINDEX,
-                             TRACE_REASON_ENCRYPT_OVERLAY, 0);
-            trace_printk("cil_to_netdev: redirected to stack\n",
-                        sizeof("cil_to_netdev: redirected to stack\n"));
-            return ret;
-        }
-        if (IS_ERR(ret))
-            goto drop_err;
-    }
-#endif
-
-#ifdef ENABLE_WIREGUARD
-    if (!ctx_mark_is_wireguard(ctx)) {
-        trace_printk("cil_to_netdev: checking WireGuard\n",
-                    sizeof("cil_to_netdev: checking WireGuard\n"));
-        ret = host_wg_encrypt_hook(ctx, proto);
-        if (ret == CTX_ACT_REDIRECT) {
-            trace_printk("cil_to_netdev: WireGuard redirect\n",
-                        sizeof("cil_to_netdev: WireGuard redirect\n"));
-            return ret;
-        } else if (IS_ERR(ret))
-            goto drop_err;
-    } else {
-        trace.reason |= TRACE_REASON_ENCRYPTED;
-        trace_printk("cil_to_netdev: packet already encrypted\n",
-                    sizeof("cil_to_netdev: packet already encrypted\n"));
-    }
-
-#if defined(ENCRYPTION_STRICT_MODE)
-    if (!strict_allow(ctx, proto)) {
-        ret = DROP_UNENCRYPTED_TRAFFIC;
-        trace_printk("cil_to_netdev: dropping unencrypted traffic\n",
-                    sizeof("cil_to_netdev: dropping unencrypted traffic\n"));
-        goto drop_err;
-    }
-#endif
-#endif
 
 #ifdef ENABLE_HEALTH_CHECK
     ret = lb_handle_health(ctx, proto);
