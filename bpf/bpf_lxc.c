@@ -1247,14 +1247,16 @@ __section_tail(CILIUM_MAP_CALLS, CILIUM_CALL_IPV4_FROM_LXC_CONT)
 static __always_inline
 int tail_handle_ipv4_cont(struct __ctx_buff *ctx)
 {
+	/* Declare all variables at the top */
 	__u32 dst_sec_identity = 0;
 	__s8 ext_err = 0;
-	/* Logging variables */
 	void *data, *data_end;
 	struct iphdr *ip4;
 	struct ethhdr *eth;
 	__u32 seq = 0;
+	int ret;
 
+	/* Executable code follows */
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
 	eth = data;
@@ -1271,7 +1273,7 @@ int tail_handle_ipv4_cont(struct __ctx_buff *ctx)
 		     sizeof("tail_handle_ipv4_cont: src_mac=%pm dst_mac=%pm\n"),
 		     eth->h_source, eth->h_dest);
 
-	int ret = handle_ipv4_from_lxc(ctx, &dst_sec_identity, &ext_err);
+	ret = handle_ipv4_from_lxc(ctx, &dst_sec_identity, &ext_err);
 
 	if (IS_ERR(ret))
 		return send_drop_notify_ext(ctx, SECLABEL_IPV4, dst_sec_identity,
