@@ -796,11 +796,14 @@ int tail_handle_ipv6_cont(struct __ctx_buff *ctx)
 
 	int ret = handle_ipv6_from_lxc(ctx, &dst_sec_identity, &ext_err);
 
-	if (IS_ERR(ret))
-		trace_printk("tail_handle_ipv6_cont: dropping ret=%d\n", ret);
+	if (IS_ERR(ret)){
+		trace_printk("tail_handle_ipv6_cont: dropping ret=%d\n",
+			     sizeof("tail_handle_ipv6_cont: dropping ret=%d\n"),
+			     ret);
 		return send_drop_notify_ext(ctx, SECLABEL_IPV6, dst_sec_identity,
 					    TRACE_EP_ID_UNKNOWN, ret, ext_err,
 					    CTX_ACT_DROP, METRIC_EGRESS);
+	}
 
 #ifdef ENABLE_CUSTOM_CALLS
 	if (!encode_custom_prog_meta(ctx, ret, dst_sec_identity)) {
@@ -1282,11 +1285,13 @@ int tail_handle_ipv4_cont(struct __ctx_buff *ctx)
 
 	ret = handle_ipv4_from_lxc(ctx, &dst_sec_identity, &ext_err);
 
-	if (IS_ERR(ret))
-		trace_printk("tail_handle_ipv4_cont: dropping ret=%d\n", ret);
+	if (IS_ERR(ret)){
+		trace_printk("tail_handle_ipv4_cont: dropping ret=%d\n", 
+			sizeof("tail_handle_ipv4_cont: dropping ret=%d\n"), ret);
 		return send_drop_notify_ext(ctx, SECLABEL_IPV4, dst_sec_identity,
 					    TRACE_EP_ID_UNKNOWN, ret, ext_err,
 					    CTX_ACT_DROP, METRIC_EGRESS);
+	}
 
 #ifdef ENABLE_CUSTOM_CALLS
 	if (!encode_custom_prog_meta(ctx, ret, dst_sec_identity)) {
@@ -1484,11 +1489,14 @@ int cil_from_container(struct __ctx_buff *ctx)
 	}
 
 out:
-	if (IS_ERR(ret))
-		trace_printk("cil_from_container: dropping ret=%d\n", ret);
+	if (IS_ERR(ret)){
+		trace_printk("cil_from_container: dropping ret=%d\n",
+			     sizeof("cil_from_container: dropping ret=%d\n"),
+			     ret);
 		return send_drop_notify_ext(ctx, sec_label, UNKNOWN_ID,
 					    TRACE_EP_ID_UNKNOWN, ret, ext_err,
 					    CTX_ACT_DROP, METRIC_EGRESS);
+	}
 	return ret;
 }
 
@@ -1702,7 +1710,8 @@ int tail_ipv6_policy(struct __ctx_buff *ctx)
 	return ret;
 
 drop_err:
-	trace_printk("tail_ipv6_policy: dropping ret=%d\n", ret);
+	trace_printk("tail_ipv6_policy: dropping ret=%d\n",
+		     sizeof("tail_ipv6_policy: dropping ret=%d\n"), ret);
 	return send_drop_notify_ext(ctx, src_label, SECLABEL_IPV6, LXC_ID,
 				    ret, ext_err, CTX_ACT_DROP, METRIC_INGRESS);
 }
@@ -1784,10 +1793,12 @@ int tail_ipv6_to_endpoint(struct __ctx_buff *ctx)
 		break;
 	}
 out:
-	if (IS_ERR(ret))
-		trace_printk("tail_ipv6_to_endpoint: dropping ret=%d\n", ret);
+	if (IS_ERR(ret)){
+		trace_printk("tail_ipv6_to_endpoint: dropping ret=%d\n",
+			     sizeof("tail_ipv6_to_endpoint: dropping ret=%d\n"), ret);
 		return send_drop_notify_ext(ctx, src_sec_identity, SECLABEL_IPV6, LXC_ID,
 					ret, ext_err, CTX_ACT_DROP, METRIC_INGRESS);
+	}
 
 #ifdef ENABLE_CUSTOM_CALLS
 	if (!proxy_redirect &&
@@ -2041,7 +2052,8 @@ int tail_ipv4_policy(struct __ctx_buff *ctx)
 	return ret;
 
 drop_err:
-	trace_printk("tail_ipv4_policy: dropping ret=%d\n", ret);
+	trace_printk("tail_ipv4_policy: dropping ret=%d\n", 
+		     sizeof("tail_ipv4_policy: dropping ret=%d\n"), ret);
 	return send_drop_notify_ext(ctx, src_label, SECLABEL_IPV4, LXC_ID,
 				    ret, ext_err, CTX_ACT_DROP, METRIC_INGRESS);
 }
@@ -2118,10 +2130,12 @@ int tail_ipv4_to_endpoint(struct __ctx_buff *ctx)
 		break;
 	}
 out:
-	if (IS_ERR(ret))
-		trace_printk("tail_ipv4_to_endpoint: dropping ret=%d\n", ret);
+	if (IS_ERR(ret)){
+		trace_printk("tail_ipv4_to_endpoint: dropping ret=%d\n",
+			     sizeof("tail_ipv4_to_endpoint: dropping ret=%d\n"), ret);
 		return send_drop_notify_ext(ctx, src_sec_identity, SECLABEL_IPV4, LXC_ID,
 					ret, ext_err, CTX_ACT_DROP, METRIC_INGRESS);
+	}
 
 #ifdef ENABLE_CUSTOM_CALLS
 	if (!proxy_redirect &&
@@ -2230,10 +2244,12 @@ int handle_policy(struct __ctx_buff *ctx)
 	}
 
 out:
-	if (IS_ERR(ret))
-		trace_printk("handle_policy: dropping ret=%d\n", ret);
+	if (IS_ERR(ret)){
+		trace_printk("handle_policy: dropping ret=%d\n",
+			     sizeof("handle_policy: dropping ret=%d\n"), ret);
 		return send_drop_notify_ext(ctx, src_label, sec_label, LXC_ID, ret, ext_err,
 					    CTX_ACT_DROP, METRIC_INGRESS);
+	}
 
 	return ret;
 }
@@ -2326,11 +2342,13 @@ int handle_policy_egress(struct __ctx_buff *ctx __maybe_unused)
 	}
 
 out:
-	if (IS_ERR(ret))
-		trace_printk("handle_policy_egress: dropping ret=%d\n", ret);
+	if (IS_ERR(ret)){
+		trace_printk("handle_policy_egress: dropping ret=%d\n",
+			     sizeof("handle_policy_egress: dropping ret=%d\n"), ret);
 		return send_drop_notify_ext(ctx, sec_label, UNKNOWN_ID,
 					    TRACE_EP_ID_UNKNOWN, ret, ext_err,
 					    CTX_ACT_DROP, METRIC_EGRESS);
+	}
 
 	return ret;
 #else
@@ -2455,10 +2473,12 @@ int cil_to_container(struct __ctx_buff *ctx)
 	}
 
 out:
-	if (IS_ERR(ret))
-		trace_printk("cil_to_container: dropping ret=%d\n", ret);
+	if (IS_ERR(ret)){
+		trace_printk("cil_to_container: dropping ret=%d\n",
+			     sizeof("cil_to_container: dropping ret=%d\n"), ret);
 		return send_drop_notify_ext(ctx, identity, sec_label, LXC_ID, ret,
 					    ext_err, CTX_ACT_DROP, METRIC_INGRESS);
+	}
 
 	return ret;
 }
