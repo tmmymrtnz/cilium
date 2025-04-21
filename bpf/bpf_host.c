@@ -77,7 +77,6 @@ static __always_inline int rewrite_dmac_to_host(struct __ctx_buff *ctx)
     union macaddr cilium_net_mac = CILIUM_NET_MAC;
     struct ethhdr *eth;
     void *data, *data_end;
-    int ret;
 
     if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("rewrite_dmac_to_host: invalid eth data\n",
@@ -85,16 +84,17 @@ static __always_inline int rewrite_dmac_to_host(struct __ctx_buff *ctx)
         return DROP_INVALID;
     }
 
-    /* print SMAC byte‑by‑byte */
     PRINT_MAC_PAIR("rewrite_dmac_to_host: ", eth->h_source, eth->h_dest);
 
-    /* now rewrite the DMAC */
-    if (eth_store_daddr(ctx, (__u8 *)&cilium_net_mac.addr, 0) < 0) {
+    if (eth_store_daddr(ctx, (__u8 *) &cilium_net_mac.addr, 0) < 0) {
         trace_printk("rewrite_dmac_to_host: failed to write destination MAC\n",
                     sizeof("rewrite_dmac_to_host: failed to write destination MAC\n"));
         return DROP_WRITE_ERROR;
     }
 
+    trace_printk("rewrite_dmac_to_host: returning CTX_ACT_OK new_DMAC=%pm\n",
+                sizeof("rewrite_dmac_to_host: returning CTX_ACT_OK new_DMAC=%pm\n"),
+                cilium_net_mac.addr);
     return CTX_ACT_OK;
 }
 
