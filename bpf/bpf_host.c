@@ -52,17 +52,20 @@
 #define FROM_HOST_FLAG_NEED_HOSTFW (1 << 1)
 #define FROM_HOST_FLAG_HOST_ID (1 << 2)
 
-#define PRINT_MAC_PAIR(prefix, smac, dmac)                                         \
-    /* first half of SMAC */                                                        \
-    trace_printk(prefix " SMAC=%02x:%02x:%02x",                                     \
-                 smac[0], smac[1], smac[2]);                                        \
-    /* second half of SMAC + first half of DMAC */                                  \
-    trace_printk(":%02x:%02x:%02x DMAC=%02x:%02x:%02x",                             \
-                 smac[3], smac[4], smac[5],                                        \
-                 dmac[0], dmac[1], dmac[2]);                                       \
-    /* second half of DMAC */                                                       \
-    trace_printk(":%02x:%02x:%02x\n",                                               \
-                 dmac[3], dmac[4], dmac[5]);
+#define PRINT_MAC_PAIR(prefix, smac, dmac) do { \
+    trace_printk(prefix " SMAC=%02x:%02x:%02x", \
+                 sizeof(prefix " SMAC=%02x:%02x:%02x"), \
+                 smac[0], smac[1], smac[2]); \
+    trace_printk(":%02x:%02x:%02x DMAC=", \
+                 sizeof(":%02x:%02x:%02x DMAC="), \
+                 smac[3], smac[4], smac[5]); \
+    trace_printk("%02x:%02x:%02x", \
+                 sizeof("%02x:%02x:%02x"), \
+                 dmac[0], dmac[1], dmac[2]); \
+    trace_printk(":%02x:%02x:%02x\n", \
+                 sizeof(":%02x:%02x:%02x\n"), \
+                 dmac[3], dmac[4], dmac[5]); \
+} while (0)
 
 static __always_inline bool allow_vlan(__u32 __maybe_unused ifindex, __u32 __maybe_unused vlan_id) {
     VLAN_FILTER(ifindex, vlan_id);
