@@ -52,6 +52,18 @@
 #define FROM_HOST_FLAG_NEED_HOSTFW (1 << 1)
 #define FROM_HOST_FLAG_HOST_ID (1 << 2)
 
+#define PRINT_MAC_PAIR(prefix, smac, dmac)                                         \
+    /* first half of SMAC */                                                        \
+    trace_printk(prefix " SMAC=%02x:%02x:%02x",                                     \
+                 smac[0], smac[1], smac[2]);                                        \
+    /* second half of SMAC + first half of DMAC */                                  \
+    trace_printk(":%02x:%02x:%02x DMAC=%02x:%02x:%02x",                             \
+                 smac[3], smac[4], smac[5],                                        \
+                 dmac[0], dmac[1], dmac[2]);                                       \
+    /* second half of DMAC */                                                       \
+    trace_printk(":%02x:%02x:%02x\n",                                               \
+                 dmac[3], dmac[4], dmac[5]);
+
 static __always_inline bool allow_vlan(__u32 __maybe_unused ifindex, __u32 __maybe_unused vlan_id) {
     VLAN_FILTER(ifindex, vlan_id);
 }
@@ -62,6 +74,7 @@ static __always_inline int rewrite_dmac_to_host(struct __ctx_buff *ctx)
     union macaddr cilium_net_mac = CILIUM_NET_MAC;
     struct ethhdr *eth;
     void *data, *data_end;
+    int ret;
 
     if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("rewrite_dmac_to_host: invalid eth data\n",
@@ -69,21 +82,19 @@ static __always_inline int rewrite_dmac_to_host(struct __ctx_buff *ctx)
         return DROP_INVALID;
     }
 
-    trace_printk("rewrite_dmac_to_host: entry SMAC=%pm DMAC=%pm\n",
-                sizeof("rewrite_dmac_to_host: entry SMAC=%pm DMAC=%pm\n"),
-                eth->h_source, eth->h_dest);
+    /* print SMAC byte‑by‑byte */
+    PRINT_MAC_PAIR("rewrite_dmac_to_host: ", eth->h_source, eth->h_dest);
 
-    if (eth_store_daddr(ctx, (__u8 *) &cilium_net_mac.addr, 0) < 0) {
+    /* now rewrite the DMAC */
+    if (eth_store_daddr(ctx, (__u8 *)&cilium_net_mac.addr, 0) < 0) {
         trace_printk("rewrite_dmac_to_host: failed to write destination MAC\n",
                     sizeof("rewrite_dmac_to_host: failed to write destination MAC\n"));
         return DROP_WRITE_ERROR;
     }
 
-    trace_printk("rewrite_dmac_to_host: returning CTX_ACT_OK new_DMAC=%pm\n",
-                sizeof("rewrite_dmac_to_host: returning CTX_ACT_OK new_DMAC=%pm\n"),
-                cilium_net_mac.addr);
     return CTX_ACT_OK;
 }
+
 
 #define SECCTX_FROM_IPCACHE_OK 2
 #ifndef SECCTX_FROM_IPCACHE
@@ -181,10 +192,8 @@ handle_ipv6(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
         sizeof("handle_ipv6: entry secctx=%u ipcache_srcid=%u from_host=%d\n"),
         secctx, ipcache_srcid, from_host);
 
-    trace_printk("handle_ipv6: SMAC=%pm DMAC=%pm\n",
-            sizeof("handle_ipv6: SMAC=%pm DMAC=%pm\n"),
-            eth->h_source, eth->h_dest);
-
+    PRINT_MAC_PAIR("handle_ipv6: ", eth->h_source, eth->h_dest);
+    
     trace_printk("handle_ipv6: src_ip=%pI6 dst_ip=%pI6\n",
             sizeof("handle_ipv6: src_ip=%pI6 dst_ip=%pI6\n"),
             &ip6->saddr, &ip6->daddr);
@@ -342,9 +351,7 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
         sizeof("handle_ipv6_cont: entry secctx=%u from_host=%d\n"),
         secctx, from_host);
 
-    trace_printk("handle_ipv6_cont: SMAC=%pm DMAC=%pm\n",
-            sizeof("handle_ipv6_cont: SMAC=%pm DMAC=%pm\n"),
-            eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("handle_ipv6_cont: ", eth->h_source, eth->h_dest);
 
     trace_printk("handle_ipv6_cont: src_ip=%pI6 dst_ip=%pI6\n",
             sizeof("handle_ipv6_cont: src_ip=%pI6 dst_ip=%pI6\n"),
@@ -448,9 +455,7 @@ handle_ipv6_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
                         sizeof("handle_ipv6_cont: invalid eth data after rewrite\n"));
             return DROP_INVALID;
         }
-        trace_printk("handle_ipv6_cont: post rewrite SMAC=%pm DMAC=%pm\n",
-                    sizeof("handle_ipv6_cont: post rewrite SMAC=%pm DMAC=%pm\n"),
-                    eth->h_source, eth->h_dest);
+        PRINT_MAC_PAIR("handle_ipv6_cont: after rewrite: ", eth->h_source, eth->h_dest);
     }
 
     ep = lookup_ip6_endpoint(ip6);
@@ -696,9 +701,7 @@ handle_to_netdev_ipv6(struct __ctx_buff *ctx, __u32 src_sec_identity,
         sizeof("handle_to_netdev_ipv6: entry src_sec_identity=%u\n"),
         src_sec_identity);
 
-    trace_printk("handle_to_netdev_ipv6: SMAC=%pm DMAC=%pm\n",
-            sizeof("handle_to_netdev_ipv6: SMAC=%pm DMAC=%pm\n"),
-            eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("handle_to_netdev_ipv6: ", eth->h_source, eth->h_dest);
 
     trace_printk("handle_to_netdev_ipv6: src_ip=%pI6 dst_ip=%pI6\n",
             sizeof("handle_to_netdev_ipv6: src_ip=%pI6 dst_ip=%pI6\n"),
@@ -837,9 +840,7 @@ handle_ipv4(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
         sizeof("handle_ipv4: entry secctx=%u ipcache_srcid=%u from_host=%d\n"),
         secctx, ipcache_srcid, from_host);
 
-    trace_printk("handle_ipv4: SMAC=%pm DMAC=%pm\n",
-            sizeof("handle_ipv4: SMAC=%pm DMAC=%pm\n"),
-            eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("handle_ipv4: ", eth->h_source, eth->h_dest);
 
     trace_printk("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n",
             sizeof("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n"),
@@ -982,9 +983,7 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
         sizeof("handle_ipv4_cont: entry secctx=%u from_host=%d\n"),
         secctx, from_host);
 
-    trace_printk("handle_ipv4_cont: SMAC=%pm DMAC=%pm\n",
-            sizeof("handle_ipv4_cont: SMAC=%pm DMAC=%pm\n"),
-            eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("handle_ipv4_cont: ", eth->h_source, eth->h_dest);
 
     trace_printk("handle_ipv4_cont: src_ip=%pI4 dst_ip=%pI4\n",
             sizeof("handle_ipv4_cont: src_ip=%pI4 dst_ip=%pI4\n"),
@@ -1079,9 +1078,7 @@ handle_ipv4_cont(struct __ctx_buff *ctx, __u32 secctx, const bool from_host,
                         sizeof("handle_ipv4_cont: invalid ip4 data after rewrite\n"));
             return DROP_INVALID;
         }
-        trace_printk("handle_ipv4_cont: post rewrite SMAC=%pm DMAC=%pm\n",
-                    sizeof("handle_ipv4_cont: post rewrite SMAC=%pm DMAC=%pm\n"),
-                    eth->h_source, eth->h_dest);
+        PRINT_MAC_PAIR("handle_ipv4_cont: after rewrite: ", eth->h_source, eth->h_dest);
     }
 
     ep = lookup_ip4_endpoint(ip4);
@@ -1364,9 +1361,7 @@ handle_to_netdev_ipv4(struct __ctx_buff *ctx, __u32 src_sec_identity,
         sizeof("handle_to_netdev_ipv4: entry src_sec_identity=%u\n"),
         src_sec_identity);
 
-    trace_printk("handle_to_netdev_ipv4: SMAC=%pm DMAC=%pm\n",
-            sizeof("handle_to_netdev_ipv4: SMAC=%pm DMAC=%pm\n"),
-            eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("handle_to_netdev_ipv4: ", eth->h_source, eth->h_dest);
 
     trace_printk("handle_to_netdev_ipv4: src_ip=%pI4 dst_ip=%pI4\n",
             sizeof("handle_to_netdev_ipv4: src_ip=%pI4 dst_ip=%pI4\n"),
@@ -1419,9 +1414,7 @@ do_netdev_encrypt_encap(struct __ctx_buff *ctx, __be16 proto, __u32 src_id)
         return DROP_INVALID;
     }
 
-    trace_printk("do_netdev_encrypt_encap: entry proto=%u src_id=%u SMAC=%pm DMAC=%pm\n",
-                sizeof("do_netdev_encrypt_encap: entry proto=%u src_id=%u SMAC=%pm DMAC=%pm\n"),
-                proto, src_id, eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("do_netdev_encrypt_encap: ", eth->h_source, eth->h_dest);
 
     if (!eth_is_supported_ethertype(proto)) {
         trace_printk("do_netdev_encrypt_encap: unsupported L2 proto=%u\n",
@@ -1588,9 +1581,7 @@ do_netdev(struct __ctx_buff *ctx, __u16 proto, __u32 __maybe_unused identity,
         sizeof("do_netdev: entry proto=%u identity=%u from_host=%d\n"),
         proto, identity, from_host);
 
-    trace_printk("do_netdev: SMAC=%pm DMAC=%pm\n",
-            sizeof("do_netdev: SMAC=%pm DMAC=%pm\n"),
-            eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("do_netdev: ", eth->h_source, eth->h_dest);
 
     bpf_clear_meta(ctx);
 
@@ -1761,9 +1752,7 @@ int cil_from_netdev(struct __ctx_buff *ctx)
         return DROP_INVALID;
     }
 
-    trace_printk("cil_from_netdev: entry SMAC=%pm DMAC=%pm\n",
-                sizeof("cil_from_netdev: entry SMAC=%pm DMAC=%pm\n"),
-                eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("cil_from_netdev: ", eth->h_source, eth->h_dest);
 
     if (ctx->vlan_present) {
         __u32 vlan_id = ctx->vlan_tci & 0xfff;
@@ -1854,9 +1843,7 @@ int cil_from_host(struct __ctx_buff *ctx)
         return DROP_INVALID;
     }
 
-    trace_printk("cil_from_host: entry SMAC=%pm DMAC=%pm\n",
-                sizeof("cil_from_host: entry SMAC=%pm DMAC=%pm\n"),
-                eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("cil_from_host: ", eth->h_source, eth->h_dest);
 
     edt_set_aggregate(ctx, 0);
 
@@ -1957,9 +1944,7 @@ int cil_to_netdev(struct __ctx_buff *ctx)
         return DROP_INVALID;
     }
 
-    trace_printk("cil_to_netdev: entry magic=%u SMAC=%pm DMAC=%pm\n",
-                sizeof("cil_to_netdev: entry magic=%u SMAC=%pm DMAC=%pm\n"),
-                magic, eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("cil_to_netdev: ", eth->h_source, eth->h_dest);
 
     bpf_clear_meta(ctx);
 
@@ -2287,9 +2272,7 @@ skip_egress_gateway:
             goto drop_err;
         }
 
-        trace_printk("cil_to_netdev: handling NAT forward SMAC=%pm DMAC=%pm\n",
-                    sizeof("cil_to_netdev: handling NAT forward SMAC=%pm DMAC=%pm\n"),
-                    eth->h_source, eth->h_dest);
+        PRINT_MAC_PAIR("cil_to_netdev: NAT ", eth->h_source, eth->h_dest);
 
         if (proto == bpf_htons(ETH_P_IPV6) && revalidate_data(ctx, &data, &data_end, &ip6)) {
             trace_printk("cil_to_netdev: NAT IPv6 src_ip=%pI6 dst_ip=%pI6\n",
@@ -2369,9 +2352,7 @@ int cil_to_host(struct __ctx_buff *ctx)
         return DROP_INVALID;
     }
 
-    trace_printk("cil_to_host: entry magic=%u SMAC=%pm DMAC=%pm\n",
-                sizeof("cil_to_host: entry magic=%u SMAC=%pm DMAC=%pm\n"),
-                magic, eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("cil_to_host: ", eth->h_source, eth->h_dest);
 
     if (((ctx->mark & MARK_MAGIC_HOST_MASK) == MARK_MAGIC_ENCRYPT) ||
         ((ctx->mark & MARK_MAGIC_HOST_MASK) == MARK_MAGIC_TO_PROXY))
@@ -2578,9 +2559,7 @@ int tail_ipv6_host_policy_ingress(struct __ctx_buff *ctx)
         sizeof("tail_ipv6_host_policy_ingress: entry src_id=%u traced=%d\n"),
         src_id, traced);
 
-    trace_printk("tail_ipv6_host_policy_ingress: SMAC=%pm DMAC=%pm\n",
-            sizeof("tail_ipv6_host_policy_ingress: SMAC=%pm DMAC=%pm\n"),
-            eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("tail_ipv6_host_policy_ingress: ", eth->h_source, eth->h_dest);
 
     trace_printk("tail_ipv6_host_policy_ingress: src_ip=%pI6 dst_ip=%pI6\n",
             sizeof("tail_ipv6_host_policy_ingress: src_ip=%pI6 dst_ip=%pI6\n"),
@@ -2650,9 +2629,7 @@ int tail_ipv4_host_policy_ingress(struct __ctx_buff *ctx)
         sizeof("tail_ipv4_host_policy_ingress: entry src_id=%u traced=%d\n"),
         src_id, traced);
 
-    trace_printk("tail_ipv4_host_policy_ingress: SMAC=%pm DMAC=%pm\n",
-            sizeof("tail_ipv4_host_policy_ingress: SMAC=%pm DMAC=%pm\n"),
-            eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("tail_ipv4_host_policy_ingress: ", eth->h_source, eth->h_dest);
 
     trace_printk("tail_ipv4_host_policy_ingress: src_ip=%pI4 dst_ip=%pI4\n",
             sizeof("tail_ipv4_host_policy_ingress: src_ip=%pI4 dst_ip=%pI4\n"),
@@ -2707,9 +2684,7 @@ to_host_from_lxc(struct __ctx_buff *ctx)
         return DROP_INVALID;
     }
 
-    trace_printk("to_host_from_lxc: entry SMAC=%pm DMAC=%pm\n",
-                sizeof("to_host_from_lxc: entry SMAC=%pm DMAC=%pm\n"),
-                eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("to_host_from_lxc: ", eth->h_source, eth->h_dest);
 
     if (!validate_ethertype(ctx, &proto)) {
         ret = DROP_UNSUPPORTED_L2;
@@ -2826,9 +2801,7 @@ from_host_to_lxc(struct __ctx_buff *ctx, __s8 *ext_err)
         return DROP_INVALID;
     }
 
-    trace_printk("from_host_to_lxc: entry SMAC=%pm DMAC=%pm\n",
-                sizeof("from_host_to_lxc: entry SMAC=%pm DMAC=%pm\n"),
-                eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("from_host_to_lxc: ", eth->h_source, eth->h_dest);
 
     if (!validate_ethertype(ctx, &proto)) {
         trace_printk("from_host_to_lxc: unsupported L2 proto=%u\n",
@@ -2919,9 +2892,7 @@ int handle_lxc_traffic(struct __ctx_buff *ctx __maybe_unused)
         return DROP_INVALID;
     }
 
-    trace_printk("handle_lxc_traffic: entry from_host=%d SMAC=%pm DMAC=%pm\n",
-                sizeof("handle_lxc_traffic: entry from_host=%d SMAC=%pm DMAC=%pm\n"),
-                from_host, eth->h_source, eth->h_dest);
+    PRINT_MAC_PAIR("handle_lxc_traffic: ", eth->h_source, eth->h_dest);
 
     if (from_host) {
         ret = from_host_to_lxc(ctx, &ext_err);
