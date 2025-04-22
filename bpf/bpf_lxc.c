@@ -1422,6 +1422,10 @@ int cil_from_container(struct __ctx_buff *ctx)
 	if (!revalidate_data(ctx, &data, &data_end, &eth))
 		return DROP_INVALID;
 
+	trace_printk("ifindex=%d\n",
+		sizeof("ifindex=%d\n"),
+		ctx->ingress_ifindex);
+
 	PRINT_MAC_PAIR("cil_from_container: ", eth->h_source, eth->h_dest);
 
 	send_trace_notify(ctx, TRACE_FROM_LXC, sec_label, UNKNOWN_ID,
