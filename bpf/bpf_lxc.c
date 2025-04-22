@@ -837,7 +837,7 @@ static __always_inline int __tail_handle_ipv6(struct __ctx_buff *ctx,
 	struct ethhdr *eth;
 	__u32 seq = 0;
 
-	if (!revalidate_data_pull(ctx, &data, &data_end, &ip6))
+	if (!revalidate_data(ctx, &data, &data_end, &ip6))
 		return DROP_INVALID;
 	eth = data;
 	if (ip6->nexthdr == IPPROTO_TCP) {
@@ -1317,7 +1317,7 @@ static __always_inline int __tail_handle_ipv4(struct __ctx_buff *ctx,
 	struct ethhdr *eth;
 	__u32 seq = 0;
 
-	if (!revalidate_data_pull(ctx, &data, &data_end, &ip4))
+	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
 	eth = data;
 	if (ip4->protocol == IPPROTO_TCP) {
