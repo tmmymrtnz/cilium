@@ -49,19 +49,21 @@
 #include "lib/nodeport.h"
 #include "lib/policy_log.h"
 
-#define PRINT_MAC_PAIR(prefix, smac, dmac) do { \
-    trace_printk(prefix " SMAC=%02x:%02x:%02x", \
-                 sizeof(prefix " SMAC=%02x:%02x:%02x"), \
-                 smac[0], smac[1], smac[2]); \
-    trace_printk(":%02x:%02x:%02x DMAC=", \
-                 sizeof(":%02x:%02x:%02x DMAC="), \
-                 smac[3], smac[4], smac[5]); \
-    trace_printk("%02x:%02x:%02x", \
-                 sizeof("%02x:%02x:%02x"), \
-                 dmac[0], dmac[1], dmac[2]); \
-    trace_printk(":%02x:%02x:%02x\n", \
-                 sizeof(":%02x:%02x:%02x\n"), \
-                 dmac[3], dmac[4], dmac[5]); \
+/* helper to pack 6 bytes into a 48‑bit value */
+#define PACK_MAC(mac)                                                        \
+  ((unsigned long long)(mac)[0] << 40 | (unsigned long long)(mac)[1] << 32 | \
+   (unsigned long long)(mac)[2] << 24 | (unsigned long long)(mac)[3] << 16 | \
+   (unsigned long long)(mac)[4] <<  8 | (unsigned long long)(mac)[5])
+
+/* single call, only 2 varargs (_s and _d) */
+#define PRINT_MAC_PAIR(prefix, smac, dmac) do {                              \
+    unsigned long long _s = PACK_MAC(smac);                                  \
+    unsigned long long _d = PACK_MAC(dmac);                                  \
+    trace_printk(prefix                                                       \
+                 " SMAC=%012llx DMAC=%012llx\n",                              \
+                 sizeof(prefix                                               \
+                        " SMAC=%012llx DMAC=%012llx\n"),                      \
+                 _s, _d);                                                     \
 } while (0)
 
 /* Per-packet LB ... */
