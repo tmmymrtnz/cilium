@@ -49,6 +49,21 @@
 #include "lib/nodeport.h"
 #include "lib/policy_log.h"
 
+#define PRINT_MAC_PAIR(prefix, smac, dmac) do { \
+    trace_printk(prefix " SMAC=%02x:%02x:%02x", \
+                 sizeof(prefix " SMAC=%02x:%02x:%02x"), \
+                 smac[0], smac[1], smac[2]); \
+    trace_printk(":%02x:%02x:%02x DMAC=", \
+                 sizeof(":%02x:%02x:%02x DMAC="), \
+                 smac[3], smac[4], smac[5]); \
+    trace_printk("%02x:%02x:%02x", \
+                 sizeof("%02x:%02x:%02x"), \
+                 dmac[0], dmac[1], dmac[2]); \
+    trace_printk(":%02x:%02x:%02x\n", \
+                 sizeof(":%02x:%02x:%02x\n"), \
+                 dmac[3], dmac[4], dmac[5]); \
+} while (0)
+
 /* Per-packet LB ... */
 #if !defined(ENABLE_SOCKET_LB_FULL) || \
     defined(ENABLE_SOCKET_LB_HOST_ONLY) || \
@@ -95,9 +110,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 	trace_printk("__per_packet_lb_svc_xlate_4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
 		     sizeof("__per_packet_lb_svc_xlate_4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
 		     &ip4->saddr, &ip4->daddr, seq);
-	trace_printk("__per_packet_lb_svc_xlate_4: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("__per_packet_lb_svc_xlate_4: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("__per_packet_lb_svc_xlate_4: ", eth->h_source, eth->h_dest);
 
 	ret = lb4_extract_tuple(ctx, ip4, ETH_HLEN, &l4_off, &tuple);
 	if (IS_ERR(ret)) {
@@ -175,9 +188,7 @@ static __always_inline int __per_packet_lb_svc_xlate_6(void *ctx, struct ipv6hdr
 	trace_printk("__per_packet_lb_svc_xlate_6: src_ip=%pI6 dst_ip=%pI6 seq=%u\n",
 		     sizeof("__per_packet_lb_svc_xlate_6: src_ip=%pI6 dst_ip=%pI6 seq=%u\n"),
 		     &ip6->saddr, &ip6->daddr, seq);
-	trace_printk("__per_packet_lb_svc_xlate_6: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("__per_packet_lb_svc_xlate_6: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("__per_packet_lb_svc_xlate_6: ", eth->h_source, eth->h_dest);
 
 	ret = lb6_extract_tuple(ctx, ip6, ETH_HLEN, &l4_off, &tuple);
 	if (IS_ERR(ret)) {
@@ -489,9 +500,7 @@ static __always_inline int handle_ipv6_from_lxc(struct __ctx_buff *ctx, __u32 *d
 	trace_printk("handle_ipv6_from_lxc: src_ip=%pI6 dst_ip=%pI6 seq=%u\n",
 		     sizeof("handle_ipv6_from_lxc: src_ip=%pI6 dst_ip=%pI6 seq=%u\n"),
 		     &ip6->saddr, &ip6->daddr, seq);
-	trace_printk("handle_ipv6_from_lxc: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("handle_ipv6_from_lxc: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("handle_ipv6_from_lxc: ", eth->h_source, eth->h_dest);
 
 	if (1) {
 		const union v6addr *daddr = (union v6addr *)&ip6->daddr;
@@ -548,9 +557,7 @@ static __always_inline int handle_ipv6_from_lxc(struct __ctx_buff *ctx, __u32 *d
 		trace_printk("handle_ipv6_from_lxc: verdict=%d src_ip=%pI6 dst_ip=%pI6\n",
 			     sizeof("handle_ipv6_from_lxc: verdict=%d src_ip=%pI6 dst_ip=%pI6\n"),
 			     verdict, &ip6->saddr, &ip6->daddr);
-		trace_printk("handle_ipv6_from_lxc: src_mac=%pm dst_mac=%pm\n",
-			     sizeof("handle_ipv6_from_lxc: src_mac=%pm dst_mac=%pm\n"),
-			     eth->h_source, eth->h_dest);
+		PRINT_MAC_PAIR("handle_ipv6_from_lxc: ", eth->h_source, eth->h_dest);
 
 		if (verdict == DROP_POLICY_AUTH_REQUIRED) {
 			auth_type = (__u8)*ext_err;
@@ -790,9 +797,7 @@ int tail_handle_ipv6_cont(struct __ctx_buff *ctx)
 	trace_printk("tail_handle_ipv6_cont: src_ip=%pI6 dst_ip=%pI6 seq=%u\n",
 		     sizeof("tail_handle_ipv6_cont: src_ip=%pI6 dst_ip=%pI6 seq=%u\n"),
 		     &ip6->saddr, &ip6->daddr, seq);
-	trace_printk("tail_handle_ipv6_cont: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("tail_handle_ipv6_cont: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("tail_handle_ipv6_cont: ", eth->h_source, eth->h_dest);
 
 	int ret = handle_ipv6_from_lxc(ctx, &dst_sec_identity, &ext_err);
 
@@ -845,9 +850,7 @@ static __always_inline int __tail_handle_ipv6(struct __ctx_buff *ctx,
 	trace_printk("__tail_handle_ipv6: src_ip=%pI6 dst_ip=%pI6 seq=%u\n",
 		     sizeof("__tail_handle_ipv6: src_ip=%pI6 dst_ip=%pI6 seq=%u\n"),
 		     &ip6->saddr, &ip6->daddr, seq);
-	trace_printk("__tail_handle_ipv6: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("__tail_handle_ipv6: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("__tail_handle_ipv6: ", eth->h_source, eth->h_dest);
 
 	if (unlikely(is_icmp6_ndp(ctx, ip6, ETH_HLEN)))
 		return icmp6_ndp_handle(ctx, ETH_HLEN, METRIC_EGRESS, ext_err);
@@ -927,9 +930,7 @@ static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx, __u32 *d
 	trace_printk("handle_ipv4_from_lxc: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
 		     sizeof("handle_ipv4_from_lxc: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
 		     &ip4->saddr, &ip4->daddr, seq);
-	trace_printk("handle_ipv4_from_lxc: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("handle_ipv4_from_lxc: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("handle_ipv4_from_lxc: ", eth->h_source, eth->h_dest);
 
 #ifdef ENABLE_PER_PACKET_LB
 	lb4_ctx_restore_state(ctx, &ct_state_new, &proxy_port, &cluster_id, true);
@@ -989,9 +990,7 @@ static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx, __u32 *d
 		trace_printk("handle_ipv4_from_lxc: verdict=%d src_ip=%pI4 dst_ip=%pI4\n",
 			     sizeof("handle_ipv4_from_lxc: verdict=%d src_ip=%pI4 dst_ip=%pI4\n"),
 			     verdict, &ip4->saddr, &ip4->daddr);
-		trace_printk("handle_ipv4_from_lxc: src_mac=%pm dst_mac=%pm\n",
-			     sizeof("handle_ipv4_from_lxc: src_mac=%pm dst_mac=%pm\n"),
-			     eth->h_source, eth->h_dest);
+		PRINT_MAC_PAIR("handle_ipv4_from_lxc: ", eth->h_source, eth->h_dest);
 
 		if (verdict == DROP_POLICY_AUTH_REQUIRED) {
 			auth_type = (__u8)*ext_err;
@@ -1279,9 +1278,7 @@ int tail_handle_ipv4_cont(struct __ctx_buff *ctx)
 	trace_printk("tail_handle_ipv4_cont: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
 		     sizeof("tail_handle_ipv4_cont: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
 		     &ip4->saddr, &ip4->daddr, seq);
-	trace_printk("tail_handle_ipv4_cont: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("tail_handle_ipv4_cont: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("tail_handle_ipv4_cont: ", eth->h_source, eth->h_dest);
 
 	ret = handle_ipv4_from_lxc(ctx, &dst_sec_identity, &ext_err);
 
@@ -1330,9 +1327,7 @@ static __always_inline int __tail_handle_ipv4(struct __ctx_buff *ctx,
 	trace_printk("__tail_handle_ipv4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
 		     sizeof("__tail_handle_ipv4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
 		     &ip4->saddr, &ip4->daddr, seq);
-	trace_printk("__tail_handle_ipv4: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("__tail_handle_ipv4: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("__tail_handle_ipv4: ", eth->h_source, eth->h_dest);
 
 #ifndef ENABLE_IPV4_FRAGMENTS
 	if (ipv4_is_fragment(ip4))
@@ -1416,9 +1411,7 @@ int cil_from_container(struct __ctx_buff *ctx)
 	if (!revalidate_data(ctx, &data, &data_end, &eth))
 		return DROP_INVALID;
 
-	trace_printk("cil_from_container: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("cil_from_container: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("cil_from_container: ", eth->h_source, eth->h_dest);
 
 	send_trace_notify(ctx, TRACE_FROM_LXC, sec_label, UNKNOWN_ID,
 			  TRACE_EP_ID_UNKNOWN, TRACE_IFINDEX_UNKNOWN,
@@ -1535,9 +1528,7 @@ ipv6_policy(struct __ctx_buff *ctx, struct ipv6hdr *ip6, int ifindex, __u32 src_
 	trace_printk("ipv6_policy: src_ip=%pI6 dst_ip=%pI6 seq=%u\n",
 		     sizeof("ipv6_policy: src_ip=%pI6 dst_ip=%pI6 seq=%u\n"),
 		     &ip6->saddr, &ip6->daddr, seq);
-	trace_printk("ipv6_policy: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("ipv6_policy: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("ipv6_policy: ", eth->h_source, eth->h_dest);
 
 	ipv6_addr_copy(&orig_sip, (union v6addr *)&ip6->saddr);
 
@@ -1587,9 +1578,7 @@ ipv6_policy(struct __ctx_buff *ctx, struct ipv6hdr *ip6, int ifindex, __u32 src_
 		trace_printk("ipv6_policy: verdict=%d src_ip=%pI6 dst_ip=%pI6\n",
 			     sizeof("ipv6_policy: verdict=%d src_ip=%pI6 dst_ip=%pI6\n"),
 			     verdict, &ip6->saddr, &ip6->daddr);
-		trace_printk("ipv6_policy: src_mac=%pm dst_mac=%pm\n",
-			     sizeof("ipv6_policy: src_mac=%pm dst_mac=%pm\n"),
-			     eth->h_source, eth->h_dest);
+		PRINT_MAC_PAIR("ipv6_policy: ", eth->h_source, eth->h_dest);
 
 		if (verdict == DROP_POLICY_AUTH_REQUIRED) {
 			struct remote_endpoint_info *sep = lookup_ip6_remote_endpoint(&orig_sip, 0);
@@ -1747,9 +1736,7 @@ int tail_ipv6_to_endpoint(struct __ctx_buff *ctx)
 	trace_printk("tail_ipv6_to_endpoint: src_ip=%pI6 dst_ip=%pI6 seq=%u\n",
 		     sizeof("tail_ipv6_to_endpoint: src_ip=%pI6 dst_ip=%pI6 seq=%u\n"),
 		     &ip6->saddr, &ip6->daddr, seq);
-	trace_printk("tail_ipv6_to_endpoint: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("tail_ipv6_to_endpoint: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("tail_ipv6_to_endpoint: ", eth->h_source, eth->h_dest);
 
 	if (unlikely(is_icmp6_ndp(ctx, ip6, ETH_HLEN))) {
 		ret = CTX_ACT_OK;
@@ -1856,9 +1843,7 @@ ipv4_policy(struct __ctx_buff *ctx, struct iphdr *ip4, int ifindex, __u32 src_la
 	trace_printk("ipv4_policy: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
 		     sizeof("ipv4_policy: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
 		     &ip4->saddr, &ip4->daddr, seq);
-	trace_printk("ipv4_policy: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("ipv4_policy: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("ipv4_policy: ", eth->h_source, eth->h_dest);
 
 	orig_sip = ip4->saddr;
 
@@ -1928,9 +1913,7 @@ ipv4_policy(struct __ctx_buff *ctx, struct iphdr *ip4, int ifindex, __u32 src_la
 		trace_printk("ipv4_policy: verdict=%d src_ip=%pI4 dst_ip=%pI4\n",
 			     sizeof("ipv4_policy: verdict=%d src_ip=%pI4 dst_ip=%pI4\n"),
 			     verdict, &ip4->saddr, &ip4->daddr);
-		trace_printk("ipv4_policy: src_mac=%pm dst_mac=%pm\n",
-			     sizeof("ipv4_policy: src_mac=%pm dst_mac=%pm\n"),
-			     eth->h_source, eth->h_dest);
+		PRINT_MAC_PAIR("ipv4_policy: ", eth->h_source, eth->h_dest);
 
 		if (verdict == DROP_POLICY_AUTH_REQUIRED) {
 			struct remote_endpoint_info *sep = lookup_ip4_remote_endpoint(orig_sip, 0);
@@ -2085,9 +2068,7 @@ int tail_ipv4_to_endpoint(struct __ctx_buff *ctx)
 	trace_printk("tail_ipv4_to_endpoint: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
 		     sizeof("tail_ipv4_to_endpoint: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
 		     &ip4->saddr, &ip4->daddr, seq);
-	trace_printk("tail_ipv4_to_endpoint: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("tail_ipv4_to_endpoint: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("tail_ipv4_to_endpoint: ", eth->h_source, eth->h_dest);
 
 	if (identity_is_reserved(src_sec_identity)) {
 		struct remote_endpoint_info *info;
@@ -2177,9 +2158,7 @@ int handle_policy(struct __ctx_buff *ctx)
 	}
 	eth = data;
 
-	trace_printk("handle_policy: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("handle_policy: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("handle_policy: ", eth->h_source, eth->h_dest);
 
 	if (!validate_ethertype(ctx, &proto)) {
 		ret = DROP_UNSUPPORTED_L2;
@@ -2272,9 +2251,7 @@ int handle_policy_egress(struct __ctx_buff *ctx __maybe_unused)
 	}
 	eth = data;
 
-	trace_printk("handle_policy_egress: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("handle_policy_egress: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("handle_policy_egress: ", eth->h_source, eth->h_dest);
 
 	if (!validate_ethertype(ctx, &proto)) {
 		ret = DROP_UNSUPPORTED_L2;
@@ -2375,9 +2352,7 @@ int cil_to_container(struct __ctx_buff *ctx)
 	}
 	eth = data;
 
-	trace_printk("cil_to_container: src_mac=%pm dst_mac=%pm\n",
-		     sizeof("cil_to_container: src_mac=%pm dst_mac=%pm\n"),
-		     eth->h_source, eth->h_dest);
+	PRINT_MAC_PAIR("cil_to_container: ", eth->h_source, eth->h_dest);
 
 	if (!validate_ethertype(ctx, &proto)) {
 		ret = DROP_UNSUPPORTED_L2;
