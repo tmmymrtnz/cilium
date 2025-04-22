@@ -831,28 +831,38 @@ TAIL_CT_LOOKUP6(CILIUM_CALL_IPV6_CT_EGRESS, tail_ipv6_ct_egress, CT_EGRESS,
 static __always_inline int __tail_handle_ipv6(struct __ctx_buff *ctx,
 					      __s8 *ext_err)
 {
-	void *data, *data_end;
-	struct ipv6hdr *ip6;
-	/* Logging variables */
-	struct ethhdr *eth;
-	__u32 seq = 0;
+    void *data, *data_end, *orig_data;
+    struct ipv6hdr *ip6;
+    struct ethhdr *eth;
+    __u32 seq = 0;
 
-	if (!revalidate_data(ctx, &data, &data_end, &ip6))
-		return DROP_INVALID;
-	eth = data;
-	if (ip6->nexthdr == IPPROTO_TCP) {
-		int hdrlen = ipv6_hdrlen(ctx, &ip6->nexthdr);
-		if (hdrlen >= 0) {
-			struct tcphdr *tcp = (struct tcphdr *)((void *)ip6 + hdrlen);
-			if ((void *)(tcp + 1) <= data_end)
-				seq = bpf_ntohl(tcp->seq);
-		}
-	}
+    /* 1) Grab original data pointer (points to L2) and ip6 pointer */
+    if (!revalidate_data(ctx, &orig_data, &data_end, &ip6))
+        return DROP_INVALID;
 
-	trace_printk("__tail_handle_ipv6: src_ip=%pI6 dst_ip=%pI6 seq=%u\n",
-		     sizeof("__tail_handle_ipv6: src_ip=%pI6 dst_ip=%pI6 seq=%u\n"),
-		     &ip6->saddr, &ip6->daddr, seq);
-	PRINT_MAC_PAIR("__tail_handle_ipv6: ", eth->h_source, eth->h_dest);
+    /* 2) Pull in the full L3 header to the linear region */
+    if (!revalidate_data_pull(ctx, &data, &data_end, &ip6))
+        return DROP_INVALID;
+
+    /* 3) Now orig_data still points at the Ethernet header */
+    eth = orig_data;
+
+    /* Sequence extraction as before */
+    if (ip6->nexthdr == IPPROTO_TCP) {
+        int hdrlen = ipv6_hdrlen(ctx, &ip6->nexthdr);
+        if (hdrlen >= 0) {
+            struct tcphdr *tcp = (struct tcphdr *)((void *)ip6 + hdrlen);
+            if ((void *)(tcp + 1) <= data_end)
+                seq = bpf_ntohl(tcp->seq);
+        }
+    }
+
+    trace_printk("__tail_handle_ipv6: src_ip=%pI6 dst_ip=%pI6 seq=%u\n",
+                 sizeof("__tail_handle_ipv6: src_ip=%pI6 dst_ip=%pI6 seq=%u\n"),
+                 &ip6->saddr, &ip6->daddr, seq);
+
+    /* And now your MAC‑pair prints will always see the real L2 bytes */
+    PRINT_MAC_PAIR("__tail_handle_ipv6: ", eth->h_source, eth->h_dest);
 
 	if (unlikely(is_icmp6_ndp(ctx, ip6, ETH_HLEN)))
 		return icmp6_ndp_handle(ctx, ETH_HLEN, METRIC_EGRESS, ext_err);
@@ -1311,25 +1321,33 @@ TAIL_CT_LOOKUP4(CILIUM_CALL_IPV4_CT_EGRESS, tail_ipv4_ct_egress, CT_EGRESS,
 static __always_inline int __tail_handle_ipv4(struct __ctx_buff *ctx,
 					      __s8 *ext_err __maybe_unused)
 {
-	void *data, *data_end;
-	struct iphdr *ip4;
-	/* Logging variables */
-	struct ethhdr *eth;
-	__u32 seq = 0;
+    void *orig_data, *data, *data_end;
+    struct iphdr *ip4;
+    struct ethhdr *eth;
+    __u32 seq = 0;
 
-	if (!revalidate_data(ctx, &data, &data_end, &ip4))
-		return DROP_INVALID;
-	eth = data;
-	if (ip4->protocol == IPPROTO_TCP) {
-		struct tcphdr *tcp = (struct tcphdr *)((void *)ip4 + ipv4_hdrlen(ip4));
-		if ((void *)(tcp + 1) <= data_end)
-			seq = bpf_ntohl(tcp->seq);
-	}
+    /* 1) Peek at L2 to capture the real Ethernet header pointer */
+    if (!revalidate_data(ctx, &orig_data, &data_end, &ip4))
+        return DROP_INVALID;
 
-	trace_printk("__tail_handle_ipv4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
-		     sizeof("__tail_handle_ipv4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
-		     &ip4->saddr, &ip4->daddr, seq);
-	PRINT_MAC_PAIR("__tail_handle_ipv4: ", eth->h_source, eth->h_dest);
+    /* 2) Pull the full IPv4 header into linear space */
+    if (!revalidate_data_pull(ctx, &data, &data_end, &ip4))
+        return DROP_INVALID;
+
+    /* 3) Use the original L2 pointer for MAC extraction */
+    eth = orig_data;
+
+    if (ip4->protocol == IPPROTO_TCP) {
+        struct tcphdr *tcp = (struct tcphdr *)((void *)ip4 + ipv4_hdrlen(ip4));
+        if ((void *)(tcp + 1) <= data_end)
+            seq = bpf_ntohl(tcp->seq);
+    }
+
+    trace_printk("__tail_handle_ipv4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
+                 sizeof("__tail_handle_ipv4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
+                 &ip4->saddr, &ip4->daddr, seq);
+
+    PRINT_MAC_PAIR("__tail_handle_ipv4: ", eth->h_source, eth->h_dest);
 
 #ifndef ENABLE_IPV4_FRAGMENTS
 	if (ipv4_is_fragment(ip4))
