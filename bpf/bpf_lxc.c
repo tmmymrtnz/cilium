@@ -1417,6 +1417,7 @@ int cil_from_container(struct __ctx_buff *ctx)
     bpf_clear_meta(ctx);
     ctx->queue_mapping = 0;  /* GH-18311 workaround */
 
+    /* Fix syntax error: use 'eth' instead of 'ð' */
     if (!revalidate_data(ctx, &data, &data_end, &eth))
         return DROP_INVALID;
 
@@ -1437,8 +1438,8 @@ int cil_from_container(struct __ctx_buff *ctx)
         /* Copy the 6-byte source MAC into our key */
         __builtin_memcpy(bm_key.addr, eth->h_source, sizeof(bm_key.addr));
 
-        /* Perform map lookup using kernel helper */
-        value = bpf_map_lookup_elem(&blocked_macs, &bm_key);
+        /* Perform map lookup using Cilium's macro */
+        value = map_lookup_elem(&blocked_macs, &bm_key);
         if (value && value->blocked) {
             /* Pack into a u64 so we can print hex */
             __u64 smac = PACK_MAC(eth->h_source);
@@ -1452,7 +1453,7 @@ int cil_from_container(struct __ctx_buff *ctx)
         }
     }
 
-    /* — the rest of your existing logic — */
+    /* — the rest of the existing logic — */
     PRINT_MAC_PAIR("cil_from_container: ", eth->h_source, eth->h_dest);
     send_trace_notify(ctx, TRACE_FROM_LXC, sec_label, UNKNOWN_ID,
                       TRACE_EP_ID_UNKNOWN, TRACE_IFINDEX_UNKNOWN,
