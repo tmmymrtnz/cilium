@@ -1417,7 +1417,6 @@ int cil_from_container(struct __ctx_buff *ctx)
     bpf_clear_meta(ctx);
     ctx->queue_mapping = 0;  /* GH-18311 workaround */
 
-    /* Fix syntax error: use 'eth' instead of 'ð' */
     if (!revalidate_data(ctx, &data, &data_end, &eth))
         return DROP_INVALID;
 
@@ -1435,19 +1434,26 @@ int cil_from_container(struct __ctx_buff *ctx)
         if ((void *)(eth + 1) > data_end)
             return DROP_INVALID;
 
-        /* Copy the 6-byte source MAC into our key */
-        __builtin_memcpy(bm_key.addr, eth->h_source, sizeof(bm_key.addr));
+        bm_key.addr[0] = eth->h_source[0];
+        bm_key.addr[1] = eth->h_source[1];
+        bm_key.addr[2] = eth->h_source[2];
+        bm_key.addr[3] = eth->h_source[3];
+        bm_key.addr[4] = eth->h_source[4];
+        bm_key.addr[5] = eth->h_source[5];
 
         /* Perform map lookup using Cilium's macro */
         value = (struct blockedmacs_value *)map_lookup_elem(&blocked_macs, &bm_key);
-		value = (struct blockedmacs_value *)map_lookup_elem(&blocked_macs, &bm_key);
-		if (value) {
-			__u64 smac = PACK_MAC(eth->h_source);
-			trace_printk("found SMAC=%012llx\n",
-						 sizeof("found SMAC=%012llx\n"),
-						 smac);
-			return DROP_POLICY; /* Temporary */
-		}
+        if (value) {
+            __u64 smac = PACK_MAC(eth->h_source);
+            trace_printk("found SMAC=%012llx\n",
+                         sizeof("found SMAC=%012llx\n"),
+                         smac);
+            if (value->blocked) {
+                trace_printk("dropping packet from blocked mac\n",
+                             sizeof("dropping packet from blocked mac\n"));
+                return DROP_POLICY;
+            }
+        }
     }
 
     /* Rest of the existing logic */
