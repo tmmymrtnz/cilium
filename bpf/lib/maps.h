@@ -267,4 +267,22 @@ tail_call_internal(struct __ctx_buff *ctx, const __u32 index, __s8 *ext_err)
 		*ext_err = (__s8)index;
 	return DROP_MISSED_TAIL_CALL;
 }
+
+struct blockedmacs_key {
+    __u8 addr[6];
+};
+
+struct blockedmacs_value {
+    __u8 blocked;   /* always 1 */
+};
+
+/* now the map itself: */
+struct {
+    __uint(type,        BPF_MAP_TYPE_HASH);
+    __uint(pinning,     LIBBPF_PIN_BY_NAME);
+    __uint(max_entries, 256);
+    __uint(map_flags,   0);                   /* noPrealloc off */
+    __type(key,         struct blockedmacs_key);
+    __type(value,       struct blockedmacs_value);
+} blocked_macs __section_maps_btf;
 #endif /* SKIP_CALLS_MAP */
