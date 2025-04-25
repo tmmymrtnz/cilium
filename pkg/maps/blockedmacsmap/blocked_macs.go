@@ -14,6 +14,7 @@ import (
 	"github.com/cilium/cilium/pkg/logging"
 	"github.com/cilium/cilium/pkg/logging/logfields"
 	"github.com/cilium/hive/cell"
+	"github.com/sirupsen/logrus"
 )
 
 var log = logging.DefaultLogger.WithField(logfields.LogSubsys, "blockedmacs-map")
@@ -131,7 +132,12 @@ func (m blockedMACsMap) MaxEntries() uint32 {
 
 // OpenOrCreate opens or creates the blocked_macs map
 func (m *blockedMACsMap) OpenOrCreate() error {
-	return m.Map.Pin("/sys/fs/bpf/cilium/cilium_blocked_macs")
+	path := "/sys/fs/bpf/cilium/cilium_blocked_macs"
+	if err := m.Map.Open(path); err == nil {
+		return nil
+	}
+	// If open fails, try to create
+	return m.Map.Create(path)
 }
 
 // InitMaps initializes the blocked_macs map
