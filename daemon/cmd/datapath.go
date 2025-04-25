@@ -160,9 +160,9 @@ func (d *Daemon) initMaps() error {
 	}
 
 	blockedMACsMap := blockedmacsmap.NewMap(blockedmacsmap.MaxEntries)
-    if err := blockedMACsMap.Init(); err != nil {
-        return fmt.Errorf("initializing blocked MACs map: %w", err)
-    }
+	if err := blockedMACsMap.Init(); err != nil {
+		return fmt.Errorf("initializing blocked MACs map: %w", err)
+	}
 
 	if option.Config.TunnelingEnabled() {
 		if err := tunnel.TunnelMap().Recreate(); err != nil {

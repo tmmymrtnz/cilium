@@ -50,6 +50,7 @@ import (
 	loadbalancer_experimental "github.com/cilium/cilium/pkg/loadbalancer/experimental"
 	"github.com/cilium/cilium/pkg/logging/logfields"
 	"github.com/cilium/cilium/pkg/maglev"
+	"github.com/cilium/cilium/pkg/maps/blockedmacsmap"
 	"github.com/cilium/cilium/pkg/maps/metricsmap"
 	natStats "github.com/cilium/cilium/pkg/maps/nat/stats"
 	"github.com/cilium/cilium/pkg/maps/ratelimitmap"
@@ -108,6 +109,9 @@ var (
 
 		// Provides cilium_bpf_ratelimit_dropped_total Prometheus metric.
 		ratelimitmap.Cell,
+
+		// Provides cilium_blocked_macs Prometheus metric.
+		blockedmacsmap.Cell,
 
 		// Provide option.Config via hive so cells can depend on the agent config.
 		cell.Provide(func() *option.DaemonConfig { return option.Config }),

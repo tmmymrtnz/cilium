@@ -7,6 +7,7 @@ import (
 	check "github.com/cilium/cilium/pkg/alignchecker"
 	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/maps/authmap"
+	"github.com/cilium/cilium/pkg/maps/blockedmacsmap"
 	"github.com/cilium/cilium/pkg/maps/bwmap"
 	"github.com/cilium/cilium/pkg/maps/ctmap"
 	"github.com/cilium/cilium/pkg/maps/egressmap"
@@ -129,6 +130,8 @@ func init() {
 		"ratelimit_value":         {ratelimitmap.Value{}},
 		"ratelimit_metrics_key":   {ratelimitmap.MetricsKey{}},
 		"ratelimit_metrics_value": {ratelimitmap.MetricsValue{}},
+		"blockedmacs_key":         {blockedmacsmap.MACKey{}},
+		"blockedmacs_value":       {blockedmacsmap.MACValue{}},
 	})
 
 	registerToCheckSizes(map[string][]any{
