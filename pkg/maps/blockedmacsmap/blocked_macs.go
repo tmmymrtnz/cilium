@@ -16,7 +16,7 @@ import (
 )
 
 const (
-    MapName    = "blocked-macs"
+    MapName    = "blocked_macs"
     MaxEntries = 256
 )
 
