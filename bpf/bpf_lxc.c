@@ -1428,11 +1428,19 @@ int cil_from_container(struct __ctx_buff *ctx)
     /* — blocked-MAC lookup — */
     {
         struct blockedmacs_key bm_key = {};
-        /* copy the 6-byte source MAC into our key */
+        struct blockedmacs_value *value;
+
+        /* Ensure Ethernet header is valid */
+        if ((void *)(eth + 1) > data_end)
+            return DROP_INVALID;
+
+        /* Copy the 6-byte source MAC into our key */
         __builtin_memcpy(bm_key.addr, eth->h_source, sizeof(bm_key.addr));
 
-        if (map_lookup_elem(&blocked_macs, &bm_key)) {
-            /* pack into a u64 so we can print hex */
+        /* Perform map lookup using kernel helper */
+        value = bpf_map_lookup_elem(&blocked_macs, &bm_key);
+        if (value && value->blocked) {
+            /* Pack into a u64 so we can print hex */
             __u64 smac = PACK_MAC(eth->h_source);
 
             trace_printk("blocked SMAC=%012llx\n",
