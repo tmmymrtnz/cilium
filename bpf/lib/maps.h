@@ -271,7 +271,7 @@ struct {
     __type(value,       struct blockedmacs_value);
     __uint(pinning,     LIBBPF_PIN_BY_NAME);
     __uint(max_entries, 256);
-    __uint(map_flags,   BPF_F_NO_PREALLOC);;
+    __uint(map_flags,   BPF_F_NO_PREALLOC);
 } blocked_macs __section_maps_btf;
 
 #ifndef SKIP_CALLS_MAP
