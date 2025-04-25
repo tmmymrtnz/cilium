@@ -1407,13 +1407,14 @@ int tail_handle_arp(struct __ctx_buff *ctx)
 __section_entry
 int cil_from_container(struct __ctx_buff *ctx)
 {
-    __u16          proto;
-    __u32          sec_label = SECLABEL;
-    __s8           ext_err   = 0;
-    int            ret;
-    void          *data, *data_end;
-    struct ethhdr *eth;
+    __u16            proto;
+    __u32            sec_label = SECLABEL;
+    __s8             ext_err   = 0;
+    int              ret;
+    void            *data, *data_end;
+    struct ethhdr   *eth;
     __u8             smac[ETH_ALEN], dmac[ETH_ALEN];
+    int              i;
 
     /* preserve/clear metadata and set queue */
     bpf_clear_meta(ctx);
@@ -1424,7 +1425,6 @@ int cil_from_container(struct __ctx_buff *ctx)
         return DROP_INVALID;
 
     /* copy SMAC/DMAC into locals */
-	int i;
 #pragma unroll
     for (i = 0; i < ETH_ALEN; i++) {
         smac[i] = eth->h_source[i];
@@ -1436,7 +1436,6 @@ int cil_from_container(struct __ctx_buff *ctx)
         struct blockedmacs_key    key = {};
         struct blockedmacs_value *val;
 
-        /* build lookup key from src-MAC */
 #pragma unroll
         for (i = 0; i < ETH_ALEN; i++)
             key.addr[i] = smac[i];
@@ -1474,6 +1473,7 @@ int cil_from_container(struct __ctx_buff *ctx)
     case bpf_htons(ETH_P_IPV6): {
         struct ipv6hdr *ip6 = (void *)(eth + 1);
         __u32 seq = 0;
+
         if ((void *)(ip6 + 1) > data_end)
             return DROP_INVALID;
         if (ip6->nexthdr == IPPROTO_TCP) {
@@ -1498,6 +1498,7 @@ int cil_from_container(struct __ctx_buff *ctx)
     case bpf_htons(ETH_P_IP): {
         struct iphdr *ip4 = (void *)(eth + 1);
         __u32 seq = 0;
+
         if ((void *)(ip4 + 1) > data_end)
             return DROP_INVALID;
         if (ip4->protocol == IPPROTO_TCP) {
