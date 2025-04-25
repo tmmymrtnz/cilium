@@ -5,6 +5,7 @@ package blockedmacsmap
 
 import (
     "fmt"
+    "net"
 
     "github.com/cilium/ebpf"
     "github.com/cilium/hive/cell"
@@ -19,7 +20,7 @@ var Cell = cell.Module(
 )
 
 const (
-    MapName = "blocked-macs"
+    MapName    = "blocked-macs"
     MaxEntries = 256
 )
 
@@ -50,10 +51,22 @@ var blockedMACs = bpf.NewMap(
     &MACKey{},
     &MACValue{},
     MaxEntries,
-    0,
+    ebpf.BPF_F_NO_PREALLOC,
 )
 
 // InitMaps opens (or creates & pins) the blocked_macs map under /sys/fs/bpf.
 func InitMaps() error {
     return blockedMACs.OpenOrCreate()
+}
+
+// AddBlockedMAC adds a MAC address to the blocked_macs map.
+func AddBlockedMAC(mac net.HardwareAddr) error {
+    if len(mac) != 6 {
+        return fmt.Errorf("invalid MAC address: %s", mac)
+    }
+
+    key := &MACKey{Addr: [6]byte{mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]}}
+    value := &MACValue{Block: 1} // 1 indicates blocked
+
+    return blockedMACs.Update(key, value)
 }
