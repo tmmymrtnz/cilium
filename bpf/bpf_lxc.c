@@ -51,10 +51,10 @@
 #include "lib/policy_log.h"
 
 struct {
-    __uint(type,        BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
-    __type(key,         __u64);   // packed MAC
-    __type(value,       __u8);    // dummy, e.g. 1 == blocked
+    __type(key, __u8[6]);    // <-- 6-byte key
+    __type(value, __u8);
 } blocked_macs __attribute__((section(".maps/blocked-macs"), used));
 
 /* helper to pack 6 bytes into a 48‑bit value */
@@ -1422,7 +1422,7 @@ int cil_from_container(struct __ctx_buff *ctx)
     struct ethhdr *eth;
     /* must declare these before any executable code */
     __u64          smac;
-    __u8         * blk;
+    __u8           *blk;
 
     bpf_clear_meta(ctx);
     /* GH-18311 workaround */
@@ -1439,19 +1439,24 @@ int cil_from_container(struct __ctx_buff *ctx)
 
     // —————————————————————————————————————————————————
     // pack and lookup source MAC
-    smac = PACK_MAC(eth->h_source);
-    blk  = map_lookup_elem(&blocked_macs, &smac);
-    if (blk) {
-        trace_printk("blocked SMAC %012llx\n",
-                     sizeof("blocked SMAC %012llx\n"),
-                     smac);
-        trace_printk("dropping packet from blocked mac\n",
-                     sizeof("dropping packet from blocked mac\n"));
-        return DROP_POLICY;
+    {
+        __u8 mac[6];
+        memcpy(mac, eth->h_source, 6);
+        smac = PACK_MAC(mac);               // ← pack before printing
+        blk = map_lookup_elem(&blocked_macs, mac);
+
+        if (blk) {
+            trace_printk("blocked SMAC %012llx\n",
+                         sizeof("blocked SMAC %012llx\n"),
+                         smac);
+            trace_printk("dropping packet from blocked mac\n",
+                         sizeof("dropping packet from blocked mac\n"));
+            return DROP_POLICY;
+        }
     }
     // —————————————————————————————————————————————————
 
-    /* your existing logging + tail-calls */
+    /* existing logging + tail-calls */
     PRINT_MAC_PAIR("cil_from_container: ", eth->h_source, eth->h_dest);
     send_trace_notify(ctx, TRACE_FROM_LXC, sec_label, UNKNOWN_ID,
                       TRACE_EP_ID_UNKNOWN, TRACE_IFINDEX_UNKNOWN,
@@ -1465,57 +1470,57 @@ int cil_from_container(struct __ctx_buff *ctx)
     switch (proto) {
 #ifdef ENABLE_IPV6
     case bpf_htons(ETH_P_IPV6):
-    {
-        struct ipv6hdr *ip6 = (void *)(eth + 1);
-        __u32 seq = 0;
-        if ((void *)(ip6 + 1) > data_end)
-            return DROP_INVALID;
-        if (ip6->nexthdr == IPPROTO_TCP) {
-            int hdrlen = ipv6_hdrlen(ctx, &ip6->nexthdr);
-            if (hdrlen >= 0) {
-                struct tcphdr *tcp = (void *)ip6 + hdrlen;
-                if ((void *)(tcp + 1) <= data_end)
-                    seq = bpf_ntohl(tcp->seq);
+        {
+            struct ipv6hdr *ip6 = (void *)(eth + 1);
+            __u32 seq = 0;
+            if ((void *)(ip6 + 1) > data_end)
+                return DROP_INVALID;
+            if (ip6->nexthdr == IPPROTO_TCP) {
+                int hdrlen = ipv6_hdrlen(ctx, &ip6->nexthdr);
+                if (hdrlen >= 0) {
+                    struct tcphdr *tcp = (void *)ip6 + hdrlen;
+                    if ((void *)(tcp + 1) <= data_end)
+                        seq = bpf_ntohl(tcp->seq);
+                }
             }
+            trace_printk("cil_from_container: src_ip=%pI6 dst_ip=%pI6 seq=%u\n",
+                         sizeof("cil_from_container: src_ip=%pI6 dst_ip=%pI6 seq=%u\n"),
+                         &ip6->saddr, &ip6->daddr, seq);
+            edt_set_aggregate(ctx, LXC_ID);
+            ret = tail_call_internal(ctx, CILIUM_CALL_IPV6_FROM_LXC, &ext_err);
+            sec_label = SECLABEL_IPV6;
+            break;
         }
-        trace_printk("cil_from_container: src_ip=%pI6 dst_ip=%pI6 seq=%u\n",
-                     sizeof("cil_from_container: src_ip=%pI6 dst_ip=%pI6 seq=%u\n"),
-                     &ip6->saddr, &ip6->daddr, seq);
-        edt_set_aggregate(ctx, LXC_ID);
-        ret = tail_call_internal(ctx, CILIUM_CALL_IPV6_FROM_LXC, &ext_err);
-        sec_label = SECLABEL_IPV6;
-        break;
-    }
 #endif
 #ifdef ENABLE_IPV4
     case bpf_htons(ETH_P_IP):
-    {
-        struct iphdr *ip4 = (void *)(eth + 1);
-        __u32 seq = 0;
-        if ((void *)(ip4 + 1) > data_end)
-            return DROP_INVALID;
-        if (ip4->protocol == IPPROTO_TCP) {
-            struct tcphdr *tcp = (void *)ip4 + ipv4_hdrlen(ip4);
-            if ((void *)(tcp + 1) <= data_end)
-                seq = bpf_ntohl(tcp->seq);
+        {
+            struct iphdr *ip4 = (void *)(eth + 1);
+            __u32 seq = 0;
+            if ((void *)(ip4 + 1) > data_end)
+                return DROP_INVALID;
+            if (ip4->protocol == IPPROTO_TCP) {
+                struct tcphdr *tcp = (void *)ip4 + ipv4_hdrlen(ip4);
+                if ((void *)(tcp + 1) <= data_end)
+                    seq = bpf_ntohl(tcp->seq);
+            }
+            trace_printk("cil_from_container: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
+                         sizeof("cil_from_container: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
+                         &ip4->saddr, &ip4->daddr, seq);
+            edt_set_aggregate(ctx, LXC_ID);
+            ret = tail_call_internal(ctx, CILIUM_CALL_IPV4_FROM_LXC, &ext_err);
+            sec_label = SECLABEL_IPV4;
+            break;
         }
-        trace_printk("cil_from_container: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
-                     sizeof("cil_from_container: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
-                     &ip4->saddr, &ip4->daddr, seq);
-        edt_set_aggregate(ctx, LXC_ID);
-        ret = tail_call_internal(ctx, CILIUM_CALL_IPV4_FROM_LXC, &ext_err);
-        sec_label = SECLABEL_IPV4;
-        break;
-    }
-#ifdef ENABLE_ARP_PASSTHROUGH
+# ifdef ENABLE_ARP_PASSTHROUGH
     case bpf_htons(ETH_P_ARP):
         ret = CTX_ACT_OK;
         break;
-#elif defined(ENABLE_ARP_RESPONDER)
+# elif defined(ENABLE_ARP_RESPONDER)
     case bpf_htons(ETH_P_ARP):
         ret = tail_call_internal(ctx, CILIUM_CALL_ARP, &ext_err);
         break;
-#endif
+# endif
 #endif
     default:
         ret = DROP_UNKNOWN_L3;
@@ -1532,6 +1537,7 @@ out:
     }
     return ret;
 }
+
 
 #ifdef ENABLE_IPV6
 static __always_inline int
@@ -2285,7 +2291,7 @@ int handle_policy_egress(struct __ctx_buff *ctx __maybe_unused)
 	void *data, *data_end;
 	struct ethhdr *eth;
 
-	if (!revalidate_data(ctx, &data, &data_end, ð)) {
+	if (!revalidate_data(ctx, &data, &data_end, &eth)) {
 		ret = DROP_INVALID;
 		goto out;
 	}
