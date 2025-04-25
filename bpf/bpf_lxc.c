@@ -15,6 +15,7 @@
 
 #define EVENT_SOURCE LXC_ID
 
+#include "lib/maps.h"
 #include "lib/auth.h"
 #include "lib/tailcall.h"
 #include "lib/common.h"
@@ -1413,12 +1414,15 @@ int tail_handle_arp(struct __ctx_buff *ctx)
 __section_entry
 int cil_from_container(struct __ctx_buff *ctx)
 {
-    __u16 proto;
-    __u32 sec_label    = SECLABEL;
-    __s8 ext_err       = 0;
-    int   ret;
-    void *data, *data_end;
+    __u16          proto;
+    __u32          sec_label    = SECLABEL;
+    __s8           ext_err      = 0;
+    int            ret;
+    void          *data, *data_end;
     struct ethhdr *eth;
+    /* must declare these before any executable code */
+    __u64          smac;
+    __u8         * blk;
 
     bpf_clear_meta(ctx);
     /* GH-18311 workaround */
@@ -1435,10 +1439,9 @@ int cil_from_container(struct __ctx_buff *ctx)
 
     // —————————————————————————————————————————————————
     // pack and lookup source MAC
-    __u64 smac = PACK_MAC(eth->h_source);
-    __u8 *blk = bpf_map_lookup_elem(&blocked_macs, &smac);
+    smac = PACK_MAC(eth->h_source);
+    blk  = map_lookup_elem(&blocked_macs, &smac);
     if (blk) {
-        // two prints (≤ 5 args each)
         trace_printk("blocked SMAC %012llx\n",
                      sizeof("blocked SMAC %012llx\n"),
                      smac);
@@ -1448,7 +1451,7 @@ int cil_from_container(struct __ctx_buff *ctx)
     }
     // —————————————————————————————————————————————————
 
-    // your existing logging + tail-calls
+    /* your existing logging + tail-calls */
     PRINT_MAC_PAIR("cil_from_container: ", eth->h_source, eth->h_dest);
     send_trace_notify(ctx, TRACE_FROM_LXC, sec_label, UNKNOWN_ID,
                       TRACE_EP_ID_UNKNOWN, TRACE_IFINDEX_UNKNOWN,

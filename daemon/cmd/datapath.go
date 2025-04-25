@@ -22,6 +22,7 @@ import (
 	"github.com/cilium/cilium/pkg/defaults"
 	"github.com/cilium/cilium/pkg/endpointmanager"
 	"github.com/cilium/cilium/pkg/logging/logfields"
+	"github.com/cilium/cilium/pkg/maps/blockedmacsmap"
 	"github.com/cilium/cilium/pkg/maps/ctmap"
 	"github.com/cilium/cilium/pkg/maps/encrypt"
 	"github.com/cilium/cilium/pkg/maps/fragmap"
@@ -156,6 +157,10 @@ func (d *Daemon) initMaps() error {
 
 	if err := ratelimitmap.InitMaps(); err != nil {
 		return fmt.Errorf("initializing ratelimit maps: %w", err)
+	}
+
+	if err := blockedmacsmap.Init(); err != nil {
+		return fmt.Errorf("initializing blocked MACs map: %w", err)
 	}
 
 	if option.Config.TunnelingEnabled() {

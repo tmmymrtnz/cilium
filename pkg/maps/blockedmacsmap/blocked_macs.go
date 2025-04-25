@@ -1,50 +1,60 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright Authors of Cilium
+
 package blockedmacsmap
 
 import (
-    "github.com/cilium/ebpf"
-    "github.com/cilium/cilium/pkg/bpf"
-    "github.com/cilium/cilium/pkg/maps"
+	"fmt"
+
+	"github.com/cilium/ebpf"
+	"github.com/cilium/hive/cell"
+
+	"github.com/cilium/cilium/pkg/bpf"
+)
+
+// Cell makes this package a hive module so its InitMaps() is called
+// during agent startup.
+var Cell = cell.Module(
+	"blockedmacsmap",
+	"eBPF blocked‐MACs map",
+	cell.Invoke(InitMaps),
 )
 
 const (
-    // MapName is the kernel name for our blocked‐MACs map.
-    MapName     = "blocked_macs"
-    // MaxEntries is the max number of MACs we will block.
-    MaxEntries  = 256
+	// MapName is the name of the BPF map in the kernel.
+	MapName    = "blocked_macs"
+	// MaxEntries is the maximum number of entries in the map.
+	MaxEntries = 256
 )
 
-// MACKey is a 6-byte MAC address.
+// MACKey is a 6‐byte Ethernet address (packed into a BPF key).
 type MACKey struct {
-    Addr [6]byte `align:"addr"`
+	Addr [6]byte `align:"addr"`
 }
 
-func (k *MACKey) New() bpf.MapKey { return &MACKey{} }
+func (k *MACKey) New() bpf.MapKey   { return &MACKey{} }
+func (k *MACKey) String() string    { return fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x",
+	k.Addr[0], k.Addr[1], k.Addr[2], k.Addr[3], k.Addr[4], k.Addr[5]) }
 
-// MACValue is just a 1-byte dummy value (we only care about existence).
+// MACValue is just a dummy 1‐byte payload (0 or 1 == blocked).
 type MACValue struct {
-    Block uint8 `align:"value"`
+	Block uint8 `align:"value"`
 }
 
 func (v *MACValue) New() bpf.MapValue { return &MACValue{} }
+func (v *MACValue) String() string    { return fmt.Sprintf("%d", v.Block) }
 
-// blockedMACs is a plain hash: MAC → dummy.
+// blockedMACs is our in-memory representation of the BPF map.
 var blockedMACs = bpf.NewMap(
-    MapName,
-    ebpf.Hash,
-    &MACKey{},
-    &MACValue{},
-    MaxEntries,
-    0,
+	MapName,
+	ebpf.Hash,
+	&MACKey{},
+	&MACValue{},
+	MaxEntries,
+	0,
 )
 
-// Init creates (or opens) and pins the map under /sys/fs/bpf.
-func Init() error {
-    return blockedMACs.OpenOrCreate()
-}
-
-func init() {
-    // make sure maps.InitAll() will pick it up
-    maps.Register(blockedMACs)
+// InitMaps opens (or creates) & pins the blocked_macs map under /sys/fs/bpf.
+func InitMaps() error {
+	return blockedMACs.OpenOrCreate()
 }
