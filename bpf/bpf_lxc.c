@@ -1413,6 +1413,7 @@ int cil_from_container(struct __ctx_buff *ctx)
     int            ret;
     void          *data, *data_end;
     struct ethhdr *eth;
+    __u8             smac[ETH_ALEN], dmac[ETH_ALEN];
 
     /* preserve/clear metadata and set queue */
     bpf_clear_meta(ctx);
@@ -1422,24 +1423,30 @@ int cil_from_container(struct __ctx_buff *ctx)
     if (!revalidate_data(ctx, &data, &data_end, &eth))
         return DROP_INVALID;
 
+    /* copy SMAC/DMAC into locals */
+	int i;
+#pragma unroll
+    for (i = 0; i < ETH_ALEN; i++) {
+        smac[i] = eth->h_source[i];
+        dmac[i] = eth->h_dest[i];
+    }
+
     /* --- EARLY blocked-MAC check --- */
     {
         struct blockedmacs_key    key = {};
         struct blockedmacs_value *val;
 
-        /* copy src-MAC into lookup key */
-		int i;
-        #pragma unroll
-        for (i = 0; i < 6; i++)
-            key.addr[i] = eth->h_source[i];
+        /* build lookup key from src-MAC */
+#pragma unroll
+        for (i = 0; i < ETH_ALEN; i++)
+            key.addr[i] = smac[i];
 
-        val = (struct blockedmacs_value *)map_lookup_elem(&blocked_macs, &key);
+        val = map_lookup_elem(&blocked_macs, &key);
         if (val && val->blocked) {
-			unsigned long long _m = PACK_MAC(key.addr);
-
-			trace_printk("blocked MAC %012llx dropping\n",
-						 sizeof("blocked MAC %012llx dropping\n"),
-						 _m);
+            unsigned long long _m = PACK_MAC(smac);
+            trace_printk("blocked MAC %012llx dropping\n",
+                         sizeof("blocked MAC %012llx dropping\n"),
+                         _m);
             return DROP_POLICY;
         }
     }
@@ -1450,8 +1457,9 @@ int cil_from_container(struct __ctx_buff *ctx)
                  sizeof("ifindex=%d\n"),
                  ctx->ingress_ifindex);
 
-    /* Rest of your existing logic... */
-    PRINT_MAC_PAIR("cil_from_container: ", eth->h_source, eth->h_dest);
+    /* print the SMAC/DMAC pair */
+    PRINT_MAC_PAIR("cil_from_container:", smac, dmac);
+
     send_trace_notify(ctx, TRACE_FROM_LXC, sec_label, UNKNOWN_ID,
                       TRACE_EP_ID_UNKNOWN, TRACE_IFINDEX_UNKNOWN,
                       TRACE_REASON_UNKNOWN, TRACE_PAYLOAD_LEN);
@@ -1531,6 +1539,7 @@ out:
     }
     return ret;
 }
+
 
 #ifdef ENABLE_IPV6
 static __always_inline int
