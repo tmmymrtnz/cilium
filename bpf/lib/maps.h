@@ -279,10 +279,10 @@ struct blockedmacs_value {
 /* now the map itself: */
 struct {
     __uint(type,        BPF_MAP_TYPE_HASH);
-    __uint(pinning,     LIBBPF_PIN_BY_NAME);
     __uint(max_entries, 256);
-    __uint(map_flags,   0);                   /* noPrealloc off */
+    __uint(pinning,     LIBBPF_PIN_BY_NAME);
     __type(key,         struct blockedmacs_key);
     __type(value,       struct blockedmacs_value);
 } blocked_macs __section_maps_btf;
+
 #endif /* SKIP_CALLS_MAP */
