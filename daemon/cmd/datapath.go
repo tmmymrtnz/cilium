@@ -159,7 +159,7 @@ func (d *Daemon) initMaps() error {
 		return fmt.Errorf("initializing ratelimit maps: %w", err)
 	}
 
-	if err := blockedmacsmap.Init(); err != nil {
+	if err := blockedmacsmap.InitMaps(); err != nil {
 		return fmt.Errorf("initializing blocked MACs map: %w", err)
 	}
 
