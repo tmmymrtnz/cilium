@@ -1414,49 +1414,42 @@ int cil_from_container(struct __ctx_buff *ctx)
     void          *data, *data_end;
     struct ethhdr *eth;
 
+    /* preserve/clear metadata and set queue */
     bpf_clear_meta(ctx);
     ctx->queue_mapping = 0;  /* GH-18311 workaround */
 
+    /* pull in L2 header and bounds-check */
     if (!revalidate_data(ctx, &data, &data_end, &eth))
         return DROP_INVALID;
 
-    /* Trace ingress ifindex */
+    /* --- EARLY blocked-MAC check --- */
+    {
+        struct blockedmacs_key    key = {};
+        struct blockedmacs_value *val;
+
+        /* copy src-MAC into lookup key */
+        #pragma unroll
+        for (int i = 0; i < 6; i++)
+            key.addr[i] = eth->h_source[i];
+
+        val = (struct blockedmacs_value *)map_lookup_elem(&blocked_macs, &key);
+        if (val && val->blocked) {
+			unsigned long long _m = PACK_MAC(key.addr);
+
+			trace_printk("blocked MAC %012llx dropping\n",
+						 sizeof("blocked MAC %012llx dropping\n"),
+						 _m);
+            return DROP_POLICY;
+        }
+    }
+    /* ------------------------------- */
+
+    /* now do your normal ingress tracing */
     trace_printk("ifindex=%d\n",
                  sizeof("ifindex=%d\n"),
                  ctx->ingress_ifindex);
 
-    /* Blocked-MAC lookup */
-    {
-        struct blockedmacs_key bm_key = {};
-        struct blockedmacs_value *value;
-
-        /* Ensure Ethernet header is valid */
-        if ((void *)(eth + 1) > data_end)
-            return DROP_INVALID;
-
-        bm_key.addr[0] = eth->h_source[0];
-        bm_key.addr[1] = eth->h_source[1];
-        bm_key.addr[2] = eth->h_source[2];
-        bm_key.addr[3] = eth->h_source[3];
-        bm_key.addr[4] = eth->h_source[4];
-        bm_key.addr[5] = eth->h_source[5];
-
-        /* Perform map lookup using Cilium's macro */
-        value = (struct blockedmacs_value *)map_lookup_elem(&blocked_macs, &bm_key);
-        if (value) {
-            __u64 smac = PACK_MAC(eth->h_source);
-            trace_printk("found SMAC=%012llx\n",
-                         sizeof("found SMAC=%012llx\n"),
-                         smac);
-            if (value->blocked) {
-                trace_printk("dropping packet from blocked mac\n",
-                             sizeof("dropping packet from blocked mac\n"));
-                return DROP_POLICY;
-            }
-        }
-    }
-
-    /* Rest of the existing logic */
+    /* Rest of your existing logic... */
     PRINT_MAC_PAIR("cil_from_container: ", eth->h_source, eth->h_dest);
     send_trace_notify(ctx, TRACE_FROM_LXC, sec_label, UNKNOWN_ID,
                       TRACE_EP_ID_UNKNOWN, TRACE_IFINDEX_UNKNOWN,
@@ -1537,7 +1530,6 @@ out:
     }
     return ret;
 }
-
 
 #ifdef ENABLE_IPV6
 static __always_inline int
