@@ -1429,7 +1429,8 @@ int cil_from_container(struct __ctx_buff *ctx)
 
         /* copy src-MAC into lookup key */
         #pragma unroll
-        for (int i = 0; i < 6; i++)
+		int i;
+        for (i = 0; i < 6; i++)
             key.addr[i] = eth->h_source[i];
 
         val = (struct blockedmacs_value *)map_lookup_elem(&blocked_macs, &key);
