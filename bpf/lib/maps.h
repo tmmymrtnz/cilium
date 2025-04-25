@@ -257,17 +257,6 @@ struct {
 } VTEP_MAP __section_maps_btf;
 #endif /* ENABLE_VTEP */
 
-#ifndef SKIP_CALLS_MAP
-static __always_inline __must_check int
-tail_call_internal(struct __ctx_buff *ctx, const __u32 index, __s8 *ext_err)
-{
-	tail_call_static(ctx, CALLS_MAP, index);
-
-	if (ext_err)
-		*ext_err = (__s8)index;
-	return DROP_MISSED_TAIL_CALL;
-}
-
 struct blockedmacs_key {
     __u8 addr[6];
 };
@@ -278,11 +267,22 @@ struct blockedmacs_value {
 
 struct {
     __uint(type,        BPF_MAP_TYPE_HASH);
+	__type(key,         struct blockedmacs_key);
+    __type(value,       struct blockedmacs_value);
     __uint(pinning,     LIBBPF_PIN_BY_NAME);
     __uint(max_entries, 256);
-    __uint(map_flags,   BPF_F_NO_PREALLOC);
-    __type(key,         struct blockedmacs_key);
-    __type(value,       struct blockedmacs_value);
+    __uint(map_flags,   BPF_F_NO_PREALLOC);;
 } blocked_macs __section_maps_btf;
+
+#ifndef SKIP_CALLS_MAP
+static __always_inline __must_check int
+tail_call_internal(struct __ctx_buff *ctx, const __u32 index, __s8 *ext_err)
+{
+	tail_call_static(ctx, CALLS_MAP, index);
+
+	if (ext_err)
+		*ext_err = (__s8)index;
+	return DROP_MISSED_TAIL_CALL;
+}
 
 #endif /* SKIP_CALLS_MAP */
