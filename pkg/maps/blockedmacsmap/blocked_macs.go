@@ -19,7 +19,7 @@ var Cell = cell.Module(
 )
 
 const (
-    MapName    = "blocked_macs"
+    MapName = "blocked-macs"
     MaxEntries = 256
 )
 

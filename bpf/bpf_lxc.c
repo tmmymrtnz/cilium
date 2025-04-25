@@ -51,11 +51,11 @@
 #include "lib/policy_log.h"
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type,        BPF_MAP_TYPE_HASH);
     __uint(max_entries, 256);
-    __type(key,   __u64);   // packed MAC
-    __type(value, __u8);    // dummy, e.g. 1 == blocked
-} blocked_macs __section_maps;
+    __type(key,         __u64);   // packed MAC
+    __type(value,       __u8);    // dummy, e.g. 1 == blocked
+} blocked_macs __attribute__((section(".maps/blocked-macs"), used));
 
 /* helper to pack 6 bytes into a 48‑bit value */
 #define PACK_MAC(mac)                                                        \
