@@ -22,7 +22,6 @@ import (
 	"github.com/cilium/cilium/pkg/defaults"
 	"github.com/cilium/cilium/pkg/endpointmanager"
 	"github.com/cilium/cilium/pkg/logging/logfields"
-	"github.com/cilium/cilium/pkg/maps/blockedmacsmap"
 	"github.com/cilium/cilium/pkg/maps/ctmap"
 	"github.com/cilium/cilium/pkg/maps/encrypt"
 	"github.com/cilium/cilium/pkg/maps/fragmap"
@@ -33,6 +32,7 @@ import (
 	"github.com/cilium/cilium/pkg/maps/metricsmap"
 	"github.com/cilium/cilium/pkg/maps/nat"
 	"github.com/cilium/cilium/pkg/maps/neighborsmap"
+	"github.com/cilium/cilium/pkg/maps/blockedmacsmap"
 	"github.com/cilium/cilium/pkg/maps/policymap"
 	"github.com/cilium/cilium/pkg/maps/ratelimitmap"
 	"github.com/cilium/cilium/pkg/maps/tunnel"
@@ -159,9 +159,10 @@ func (d *Daemon) initMaps() error {
 		return fmt.Errorf("initializing ratelimit maps: %w", err)
 	}
 
-	if err := blockedmacsmap.InitMaps(); err != nil {
-		return fmt.Errorf("initializing blocked MACs map: %w", err)
-	}
+	blockedMACsMap := blockedmacsmap.NewMap(blockedmacsmap.MaxEntries)
+    if err := blockedMACsMap.Init(); err != nil {
+        return fmt.Errorf("initializing blocked MACs map: %w", err)
+    }
 
 	if option.Config.TunnelingEnabled() {
 		if err := tunnel.TunnelMap().Recreate(); err != nil {
