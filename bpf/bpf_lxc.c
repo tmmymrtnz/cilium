@@ -67,14 +67,6 @@
                  _s, _d);                                                     \
 } while (0)
 
-struct blockedmacs_key {
-    __u8 addr[6];
-};
-
-struct blockedmacs_value {
-    __u8 blocked;   /* always 1 */
-};
-
 /* Per-packet LB ... */
 #if !defined(ENABLE_SOCKET_LB_FULL) || \
     defined(ENABLE_SOCKET_LB_HOST_ONLY) || \
