@@ -132,12 +132,12 @@ func (m blockedMACsMap) MaxEntries() uint32 {
 
 // OpenOrCreate opens or creates the blocked_macs map
 func (m *blockedMACsMap) OpenOrCreate() error {
-	path := "/sys/fs/bpf/cilium/cilium_blocked_macs"
-	if err := m.Map.Open(path); err == nil {
-		return nil
-	}
-	// If open fails, try to create
-	return m.Map.Create(path)
+    // Try to open the pinned map
+    if err := m.Map.Open(); err == nil {
+        return nil
+    }
+    // Fallback to creating it
+    return m.Map.Create()
 }
 
 // InitMaps initializes the blocked_macs map
