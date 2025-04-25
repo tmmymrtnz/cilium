@@ -159,10 +159,10 @@ func (d *Daemon) initMaps() error {
 		return fmt.Errorf("initializing ratelimit maps: %w", err)
 	}
 
-	blockedMACsMap := blockedmacsmap.NewMap(blockedmacsmap.MaxEntries)
-	if err := blockedMACsMap.Init(); err != nil {
-		return fmt.Errorf("initializing blocked MACs map: %w", err)
-	}
+	if err := blockedmacsmap.InitMaps(); err != nil {
+        logrus.WithError(err).Error("Failed to initialize blockedmacsmap")
+        return err
+    }
 
 	if option.Config.TunnelingEnabled() {
 		if err := tunnel.TunnelMap().Recreate(); err != nil {

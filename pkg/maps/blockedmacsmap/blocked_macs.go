@@ -6,7 +6,6 @@ package blockedmacsmap
 import (
 	"fmt"
 	"net"
-	"unsafe"
 
 	"golang.org/x/sys/unix"
 
@@ -106,11 +105,14 @@ func (m blockedMACsMap) LookupBlockedMAC(mac net.HardwareAddr) (bool, error) {
 		return false, fmt.Errorf("invalid MAC address: %s", mac)
 	}
 	key := MACKey{Addr: [6]byte{mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]}}
-	var value MACValue
-	if err := m.Lookup(&key, &value); err != nil {
+	value, err := m.Lookup(&key)
+	if err != nil {
 		return false, nil // Not found is not an error
 	}
-	return value.Block == 1, nil
+	if val, ok := value.(*MACValue); ok {
+		return val.Block == 1, nil
+	}
+	return false, fmt.Errorf("invalid value type for MAC %s", mac)
 }
 
 // IterateWithCallback iterates through all MACs in the map
@@ -127,12 +129,24 @@ func (m blockedMACsMap) MaxEntries() uint32 {
 	return uint32(m.Map.MaxEntries())
 }
 
+// OpenOrCreate opens or creates the blocked_macs map
+func (m *blockedMACsMap) OpenOrCreate() error {
+	return m.Map.Pin("/sys/fs/bpf/cilium/cilium_blocked_macs")
+}
+
 // InitMaps initializes the blocked_macs map
 func InitMaps() error {
+	log.WithField("map_name", MapName).Debug("Attempting to open or create blocked_macs map")
 	if err := blockedMACs.OpenOrCreate(); err != nil {
-		log.WithError(err).Error("Failed to open or create blocked_macs map")
-		return fmt.Errorf("failed to init blocked_macs map: %w", err)
+		log.WithError(err).WithFields(logrus.Fields{
+			"map_name":    MapName,
+			"pinned_path": "/sys/fs/bpf/cilium/cilium_blocked_macs",
+		}).Error("Failed to open or create blocked_macs map")
+		return err
 	}
-	log.Info("Successfully initialized blocked_macs map")
+	log.WithFields(logrus.Fields{
+		"map_name":    MapName,
+		"pinned_path": "/sys/fs/bpf/cilium/cilium_blocked_macs",
+	}).Info("Successfully initialized blocked_macs map")
 	return nil
 }
