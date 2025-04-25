@@ -9,7 +9,6 @@ import (
 
     "github.com/cilium/ebpf"
     "github.com/cilium/hive/cell"
-
     "github.com/cilium/cilium/pkg/bpf"
 )
 
@@ -51,7 +50,7 @@ var blockedMACs = bpf.NewMap(
     &MACKey{},
     &MACValue{},
     MaxEntries,
-    ebpf.BPF_F_NO_PREALLOC,
+    bpf.BPF_F_NO_PREALLOC,
 )
 
 // InitMaps opens (or creates & pins) the blocked_macs map under /sys/fs/bpf.
