@@ -1315,19 +1315,48 @@ TAIL_CT_LOOKUP4(CILIUM_CALL_IPV4_CT_EGRESS, tail_ipv4_ct_egress, CT_EGRESS,
 		CILIUM_CALL_IPV4_FROM_LXC_CONT, tail_handle_ipv4_cont)
 
 static __always_inline int __tail_handle_ipv4(struct __ctx_buff *ctx,
-					      __s8 *ext_err __maybe_unused)
+                                              __s8 *ext_err __maybe_unused)
 {
-    void          *data, *data_end;
-    struct iphdr  *ip4;
-    struct ethhdr *eth;
-    __u32          seq = 0;
+    void           *data, *data_end;
+    struct iphdr   *ip4;
+    struct ethhdr  *eth;
+    __u8            smac[ETH_ALEN], dmac[ETH_ALEN];
+    int             i;
+    __u32           seq = 0;
 
-    /* Pull in IPv4 header (and L2) so it’s fully in the linear region */
+    /* Pull in L2+IPv4 header */
     if (!revalidate_data_pull(ctx, &data, &data_end, &ip4))
         return DROP_INVALID;
 
-    /* ‘data’ is the Ethernet header */
+    /* 'data' points at the Ethernet header */
     eth = data;
+
+    /* copy SMAC/DMAC into locals */
+#pragma unroll
+    for (i = 0; i < ETH_ALEN; i++) {
+        smac[i] = eth->h_source[i];
+        dmac[i] = eth->h_dest[i];
+    }
+
+    /* --- blocked-MAC check here --- */
+    {
+        struct blockedmacs_key    key = {};
+        struct blockedmacs_value *val;
+
+#pragma unroll
+        for (i = 0; i < ETH_ALEN; i++)
+            key.addr[i] = smac[i];
+
+        val = map_lookup_elem(&blocked_macs, &key);
+        if (val && val->blocked) {
+            unsigned long long _m = PACK_MAC(smac);
+            trace_printk("blocked MAC %012llx dropping\n",
+                         sizeof("blocked MAC %012llx dropping\n"),
+                         _m);
+            return DROP_POLICY;
+        }
+    }
+    /* ------------------------------- */
 
     /* Extract TCP sequence if present */
     if (ip4->protocol == IPPROTO_TCP) {
@@ -1339,7 +1368,9 @@ static __always_inline int __tail_handle_ipv4(struct __ctx_buff *ctx,
     trace_printk("__tail_handle_ipv4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
                  sizeof("__tail_handle_ipv4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
                  &ip4->saddr, &ip4->daddr, seq);
-    PRINT_MAC_PAIR("__tail_handle_ipv4: ", eth->h_source, eth->h_dest);
+
+    /* print the SMAC/DMAC pair */
+    PRINT_MAC_PAIR("__tail_handle_ipv4: ", smac, dmac);
 
 #ifndef ENABLE_IPV4_FRAGMENTS
 	if (ipv4_is_fragment(ip4))
@@ -1407,14 +1438,12 @@ int tail_handle_arp(struct __ctx_buff *ctx)
 __section_entry
 int cil_from_container(struct __ctx_buff *ctx)
 {
-    __u16            proto;
-    __u32            sec_label = SECLABEL;
-    __s8             ext_err   = 0;
-    int              ret;
-    void            *data, *data_end;
-    struct ethhdr   *eth;
-    __u8             smac[ETH_ALEN], dmac[ETH_ALEN];
-    int              i;
+    __u16          proto;
+    __u32          sec_label = SECLABEL;
+    __s8           ext_err   = 0;
+    int            ret;
+    void          *data, *data_end;
+    struct ethhdr *eth;
 
     /* preserve/clear metadata and set queue */
     bpf_clear_meta(ctx);
@@ -1424,40 +1453,13 @@ int cil_from_container(struct __ctx_buff *ctx)
     if (!revalidate_data(ctx, &data, &data_end, &eth))
         return DROP_INVALID;
 
-    /* copy SMAC/DMAC into locals */
-#pragma unroll
-    for (i = 0; i < ETH_ALEN; i++) {
-        smac[i] = eth->h_source[i];
-        dmac[i] = eth->h_dest[i];
-    }
-
-    /* --- EARLY blocked-MAC check --- */
-    {
-        struct blockedmacs_key    key = {};
-        struct blockedmacs_value *val;
-
-#pragma unroll
-        for (i = 0; i < ETH_ALEN; i++)
-            key.addr[i] = smac[i];
-
-        val = map_lookup_elem(&blocked_macs, &key);
-        if (val && val->blocked) {
-            unsigned long long _m = PACK_MAC(smac);
-            trace_printk("blocked MAC %012llx dropping\n",
-                         sizeof("blocked MAC %012llx dropping\n"),
-                         _m);
-            return DROP_POLICY;
-        }
-    }
-    /* ------------------------------- */
-
-    /* now do your normal ingress tracing */
+    /* normal ingress tracing */
     trace_printk("ifindex=%d\n",
                  sizeof("ifindex=%d\n"),
                  ctx->ingress_ifindex);
 
-    /* print the SMAC/DMAC pair */
-    PRINT_MAC_PAIR("cil_from_container:", smac, dmac);
+    /* print the SMAC/DMAC pair directly from the Ethernet header */
+    PRINT_MAC_PAIR("cil_from_container:", eth->h_source, eth->h_dest);
 
     send_trace_notify(ctx, TRACE_FROM_LXC, sec_label, UNKNOWN_ID,
                       TRACE_EP_ID_UNKNOWN, TRACE_IFINDEX_UNKNOWN,
@@ -1473,7 +1475,6 @@ int cil_from_container(struct __ctx_buff *ctx)
     case bpf_htons(ETH_P_IPV6): {
         struct ipv6hdr *ip6 = (void *)(eth + 1);
         __u32 seq = 0;
-
         if ((void *)(ip6 + 1) > data_end)
             return DROP_INVALID;
         if (ip6->nexthdr == IPPROTO_TCP) {
@@ -1498,7 +1499,6 @@ int cil_from_container(struct __ctx_buff *ctx)
     case bpf_htons(ETH_P_IP): {
         struct iphdr *ip4 = (void *)(eth + 1);
         __u32 seq = 0;
-
         if ((void *)(ip4 + 1) > data_end)
             return DROP_INVALID;
         if (ip4->protocol == IPPROTO_TCP) {
@@ -1540,7 +1540,6 @@ out:
     }
     return ret;
 }
-
 
 #ifdef ENABLE_IPV6
 static __always_inline int
