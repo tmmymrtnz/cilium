@@ -26,6 +26,10 @@ const (
 	MaxBackends = 2
 )
 
+type dupBackendsMap struct {
+	*bpf.Map
+}
+
 // dupBackendsMap is the singleton instance of our dup_backends BPF map
 var dupBackends = dupBackendsMap{
 	Map: bpf.NewMap(
