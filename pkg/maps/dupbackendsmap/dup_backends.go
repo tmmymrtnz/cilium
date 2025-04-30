@@ -45,7 +45,7 @@ var dupBackends = dupBackendsMap{
 // Cell defines the Hive module for the dup_backends map
 var Cell = cell.Module(
 	"dupbackendsmap",
-	"eBPF Duplicate–Backends Map",
+	"eBPF Duplicate-Backends Map",
 	cell.Invoke(InitMaps),
 )
 
