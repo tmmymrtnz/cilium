@@ -23,7 +23,7 @@ var log = logging.DefaultLogger.WithField(logfields.LogSubsys, "dup-backends-map
 const (
 	// MapName is the kernel map name for dup_backends
 	MapName     = "dup_backends"
-	MaxBackends = 2
+	MaxBackends = 256
 )
 
 type dupBackendsMap struct {
@@ -157,13 +157,13 @@ func InitMaps() error {
 	if err := dupBackends.OpenOrCreate(); err != nil {
 		log.WithError(err).WithFields(logrus.Fields{
 			"map_name":    MapName,
-			"pinned_path": "/sys/fs/bpf/cilium/" + MapName,
+			"pinned_path": "/sys/fs/bpf/cilium/cilium_dup_backends",
 		}).Error("Failed to initialize dup_backends map")
 		return err
 	}
 	log.WithFields(logrus.Fields{
 		"map_name":    MapName,
-		"pinned_path": "/sys/fs/bpf/cilium/" + MapName,
+		"pinned_path": "/sys/fs/bpf/cilium/cilium_dup_backends",
 	}).Info("Successfully initialized dup_backends map")
 	return nil
 }

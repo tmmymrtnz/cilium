@@ -161,12 +161,12 @@ func (d *Daemon) initMaps() error {
 	}
 
 	if err := blockedmacsmap.InitMaps(); err != nil {
-        logrus.WithError(err).Error("Failed to initialize blockedmacsmap")
+        fmt.Errorf("initializing blockedmacs map: %w", err)
         return err
     }
 
 	if err := dupbackendsmap.InitMaps(); err != nil {
-        logrus.WithError(err).Error("Failed to initialize dupbackendsmap")
+        fmt.Errorf("initializing dupbackends map: %w", err)
         return err
     }
 
