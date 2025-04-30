@@ -29,6 +29,7 @@ import (
 	"github.com/cilium/cilium/pkg/lock"
 	"github.com/cilium/cilium/pkg/logging/logfields"
 	"github.com/cilium/cilium/pkg/maps/blockedmacsmap"
+	"github.com/cilium/cilium/pkg/maps/dupbackendsmap"
 	ipcachemap "github.com/cilium/cilium/pkg/maps/ipcache"
 	ipmasqmap "github.com/cilium/cilium/pkg/maps/ipmasq"
 	"github.com/cilium/cilium/pkg/maps/lbmap"
@@ -451,6 +452,10 @@ func (d *Daemon) getBPFMapStatus() *models.BPFMapStatus {
 			{
 				Name: "Blocked MACS",
 				Size: int64(blockedmacsmap.MaxEntries),
+			},
+			{
+				Name: "Duplicate Backends",
+				Size: int64(dupbackendsmap.MaxBackends),
 			},
 			{
 				Name: "NAT",

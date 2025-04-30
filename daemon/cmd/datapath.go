@@ -22,7 +22,9 @@ import (
 	"github.com/cilium/cilium/pkg/defaults"
 	"github.com/cilium/cilium/pkg/endpointmanager"
 	"github.com/cilium/cilium/pkg/logging/logfields"
+	"github.com/cilium/cilium/pkg/maps/blockedmacsmap"
 	"github.com/cilium/cilium/pkg/maps/ctmap"
+	"github.com/cilium/cilium/pkg/maps/dupbackendsmap"
 	"github.com/cilium/cilium/pkg/maps/encrypt"
 	"github.com/cilium/cilium/pkg/maps/fragmap"
 	ipcachemap "github.com/cilium/cilium/pkg/maps/ipcache"
@@ -32,7 +34,6 @@ import (
 	"github.com/cilium/cilium/pkg/maps/metricsmap"
 	"github.com/cilium/cilium/pkg/maps/nat"
 	"github.com/cilium/cilium/pkg/maps/neighborsmap"
-	"github.com/cilium/cilium/pkg/maps/blockedmacsmap"
 	"github.com/cilium/cilium/pkg/maps/policymap"
 	"github.com/cilium/cilium/pkg/maps/ratelimitmap"
 	"github.com/cilium/cilium/pkg/maps/tunnel"
@@ -161,6 +162,11 @@ func (d *Daemon) initMaps() error {
 
 	if err := blockedmacsmap.InitMaps(); err != nil {
         logrus.WithError(err).Error("Failed to initialize blockedmacsmap")
+        return err
+    }
+
+	if err := dupbackendsmap.InitMaps(); err != nil {
+        logrus.WithError(err).Error("Failed to initialize dupbackendsmap")
         return err
     }
 

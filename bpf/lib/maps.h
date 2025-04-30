@@ -9,6 +9,8 @@
 
 #include "bpf/compiler.h"
 
+#define MAX_DUP_BACKENDS 2
+
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, struct endpoint_key);
@@ -273,6 +275,24 @@ struct {
     __uint(max_entries, 256);
     __uint(map_flags,   BPF_F_NO_PREALLOC);
 } blocked_macs __section_maps_btf;
+
+struct dup_backends_key {
+    __u32 idx;         /* 0 or 1 */
+};
+
+struct dup_backends_value {
+    __u32 ip;          /* in network byte order */
+    __u8  mac[ETH_ALEN];
+};
+
+struct {
+    __uint(type,        BPF_MAP_TYPE_HASH);
+    __type(key,         struct dup_backends_key);
+    __type(value,       struct dup_backends_value);
+    __uint(pinning,     LIBBPF_PIN_BY_NAME);
+    __uint(max_entries, MAX_DUP_BACKENDS);
+    __uint(map_flags,   BPF_F_NO_PREALLOC);
+} dup_backends __section_maps_btf;
 
 #ifndef SKIP_CALLS_MAP
 static __always_inline __must_check int

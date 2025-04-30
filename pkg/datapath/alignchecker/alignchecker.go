@@ -10,6 +10,7 @@ import (
 	"github.com/cilium/cilium/pkg/maps/blockedmacsmap"
 	"github.com/cilium/cilium/pkg/maps/bwmap"
 	"github.com/cilium/cilium/pkg/maps/ctmap"
+	"github.com/cilium/cilium/pkg/maps/dupbackendsmap"
 	"github.com/cilium/cilium/pkg/maps/egressmap"
 	"github.com/cilium/cilium/pkg/maps/eventsmap"
 	"github.com/cilium/cilium/pkg/maps/fragmap"
@@ -132,6 +133,8 @@ func init() {
 		"ratelimit_metrics_value": {ratelimitmap.MetricsValue{}},
 		"blockedmacs_key":         {blockedmacsmap.MACKey{}},
 		"blockedmacs_value":       {blockedmacsmap.MACValue{}},
+		"dup_backends_key":        {dupbackendsmap.DupBackendsKey{}},
+		"dup_backends_value":      {dupbackendsmap.DupBackendsValue{}},
 	})
 
 	registerToCheckSizes(map[string][]any{
