@@ -62,8 +62,9 @@ func (k *DupBackendsKey) String() string  { return fmt.Sprintf("%d", k.Idx) }
 
 // DupBackendsValue must match struct dup_backends_value in your BPF C code
 type DupBackendsValue struct {
-    IP  uint32  `align:"ip"`  // IPv4 in network byte order
-    MAC [6]byte `align:"mac"` // destination MAC
+    IP   uint32  `align:"ip"`  // IPv4 in network byte order
+    MAC  [6]byte `align:"mac"` // destination MAC
+    _    [2]byte             // explicit padding so sizeof==12
 }
 
 func (v *DupBackendsValue) New() bpf.MapValue { return &DupBackendsValue{} }
