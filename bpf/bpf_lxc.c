@@ -67,6 +67,15 @@
                  _s, _d);                                                     \
 } while (0)
 
+static __always_inline int
+bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
+{
+    /* cast the helper number to the correct signature and call it */
+    return (int) ((__u64 (*)(void *, __u32, __u64))
+                   (unsigned long)BPF_FUNC_clone_redirect)
+                  (ctx, ifindex, flags);
+}
+
 /* Per-packet LB ... */
 #if !defined(ENABLE_SOCKET_LB_FULL) || \
     defined(ENABLE_SOCKET_LB_HOST_ONLY) || \
@@ -79,24 +88,27 @@
 #ifdef ENABLE_PER_PACKET_LB
 
 #ifdef ENABLE_IPV4
+#include <linux/bpf.h>
+#include "bpf_helpers.h"    /* ensures bpf_clone_redirect is declared */
+
 static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4,
                                                       __s8 *ext_err)
 {
-    struct ipv4_ct_tuple tuple        = {};
-    struct ct_state      ct_state_new = {};
-    bool                 has_l4_header;
-    struct lb4_service  *svc;
-    struct lb4_key       key          = {};
-    __u16                proxy_port   = 0;
-    __u32                cluster_id   = 0;
-    int                  l4_off;
-    int                  ret          = 0;
+    struct ipv4_ct_tuple   tuple        = {};
+    struct ct_state        ct_state_new = {};
+    bool                   has_l4_header;
+    struct lb4_service    *svc;
+    struct lb4_key         key          = {};
+    __u16                  proxy_port   = 0;
+    __u32                  cluster_id   = 0;
+    int                    l4_off;
+    int                    ret          = 0;
     /* Logging variables */
-    void                *data, *data_end;
-    struct ethhdr       *eth;
-    __u32                seq          = 0;
+    void                 *data, *data_end;
+    struct ethhdr        *eth;
+    __u32                  seq          = 0;
 
-    /* Validate packet and extract Ethernet header */
+    /* Pull in L2+IPv4 header */
     if (!revalidate_data(ctx, &data, &data_end, &ip4))
         return DROP_INVALID;
     eth = data;
@@ -104,8 +116,8 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
     /* Extract TCP sequence number if applicable */
     has_l4_header = ipv4_has_l4_header(ip4);
     if (has_l4_header && ip4->protocol == IPPROTO_TCP) {
-        struct tcphdr *tcp = (struct tcphdr *)((void *)ip4 + ipv4_hdrlen(ip4));
-        if ((void *)(tcp + 1) <= data_end)
+        struct tcphdr *tcp = (void*)ip4 + ipv4_hdrlen(ip4);
+        if ((void*)(tcp + 1) <= data_end)
             seq = bpf_ntohl(tcp->seq);
     }
 
@@ -119,24 +131,22 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
     if (IS_ERR(ret)) {
         if (ret == DROP_UNSUPP_SERVICE_PROTO || ret == DROP_UNKNOWN_L4)
             goto skip_service_lookup;
-        else
-            return ret;
+        return ret;
     }
 
     lb4_fill_key(&key, &tuple);
-
     svc = lb4_lookup_service(&key, is_defined(ENABLE_NODEPORT));
     if (svc) {
 #if defined(ENABLE_L7_LB)
         if (lb4_svc_is_l7loadbalancer(svc)) {
-            proxy_port = (__u16)svc->l7_lb_proxy_port;
+            proxy_port = svc->l7_lb_proxy_port;
             goto skip_service_lookup;
         }
-#endif /* ENABLE_L7_LB */
+#endif
 #if defined(ENABLE_LOCAL_REDIRECT_POLICY) && defined(ENABLE_SOCKET_LB_FULL)
         if (unlikely(lb4_svc_is_localredirect(svc)))
             goto skip_service_lookup;
-#endif /* ENABLE_LOCAL_REDIRECT_POLICY && ENABLE_SOCKET_LB_FULL */
+#endif
 
         ret = lb4_local(get_ct_map4(&tuple), ctx,
                         ipv4_is_fragment(ip4),
@@ -150,15 +160,17 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 #ifdef SERVICE_NO_BACKEND_RESPONSE
         if (ret == DROP_NO_SERVICE)
             ret = tail_call_internal(ctx, CILIUM_CALL_IPV4_NO_SERVICE, ext_err);
-#endif /* SERVICE_NO_BACKEND_RESPONSE */
+#endif
 
         if (IS_ERR(ret))
             return ret;
 
         /* --- Clone & redirect a copy to every dup_backends entry --- */
         {
-            struct dup_backends_key    dbk = {};
+            struct dup_backends_key    dbk   = {};
             struct dup_backends_value *dbv;
+            struct endpoint_key        epk;
+            struct endpoint_info      *epinfo;
 
             #pragma unroll
             for (dbk.idx = 0; dbk.idx < MAX_DUP_BACKENDS; dbk.idx++) {
@@ -166,13 +178,14 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                 if (!dbv)
                     continue;
 
-                /* Lookup that backend’s veth ifindex by IP */
-                struct endpoint_key    epk    = { .addr = dbv->ip };
-                struct endpoint_info  *epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
+                /* positional init of epk so we don't need .addr */
+                epk = (struct endpoint_key){ dbv->ip };
+
+                epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
                 if (!epinfo)
                     continue;
 
-                /* clone and redirect to that veth */
+                /* clone & redirect into that pod’s veth */
                 bpf_clone_redirect(ctx, epinfo->ifindex, 0);
             }
         }
@@ -183,7 +196,6 @@ skip_service_lookup:
     return tail_call_internal(ctx, CILIUM_CALL_IPV4_CT_EGRESS, ext_err);
 }
 #endif /* ENABLE_IPV4 */
-
 
 #ifdef ENABLE_IPV6
 static __always_inline int __per_packet_lb_svc_xlate_6(void *ctx, struct ipv6hdr *ip6,
