@@ -180,7 +180,8 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                 /* positional init of epk so we don't need .addr */
                 epk = (struct endpoint_key){ 0 };
 				epk.ip4    = dbv->ip;
-				epk.family = ENDPOINT_KEY_IPV4;
+				epk.family    = AF_INET;
+				epk.key       = ENDPOINT_KEY_IPV4;
 
                 epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
                 if (!epinfo)
