@@ -5,6 +5,7 @@
 #include <bpf/ctx/skb.h>
 #include <bpf/api.h>
 #include <linux/in.h>
+#include <linux/bpf.h>
 
 #include <ep_config.h>
 #include <node_config.h>
@@ -88,8 +89,6 @@ bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
 #ifdef ENABLE_PER_PACKET_LB
 
 #ifdef ENABLE_IPV4
-#include <linux/bpf.h>
-#include "bpf_helpers.h"    /* ensures bpf_clone_redirect is declared */
 
 static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4,
                                                       __s8 *ext_err)
