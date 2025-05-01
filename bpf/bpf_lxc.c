@@ -168,7 +168,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
         {
             struct dup_backends_key    dbk   = {};
             struct dup_backends_value *dbv;
-            struct endpoint_key        epk;
+            struct endpoint_key        epk = {0};
             struct endpoint_info      *epinfo;
 
             #pragma unroll
@@ -178,7 +178,8 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                     continue;
 
                 /* positional init of epk so we don't need .addr */
-                epk = (struct endpoint_key){ dbv->ip };
+                epk = (struct endpoint_key){ 0 };
+            	epk.addr = dbv->ip;
 
                 epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
                 if (!epinfo)
