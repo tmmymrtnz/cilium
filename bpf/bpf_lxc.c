@@ -171,7 +171,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             struct endpoint_key        epk;
             struct endpoint_info      *epinfo;
 
-            #pragma unroll
+            #pragma clang loop unroll(full)
             for (dbk.idx = 0; dbk.idx < MAX_DUP_BACKENDS; dbk.idx++) {
                 dbv = map_lookup_elem(&dup_backends, &dbk);
                 if (!dbv)
