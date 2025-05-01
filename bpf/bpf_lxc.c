@@ -177,8 +177,26 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             if (dbv) {
                 if (dbv->ip != tuple.daddr) {
                     epk.ip4    = dbv->ip;
-                    epk.family = AF_INET;
                     epk.key    = ENDPOINT_KEY_IPV4;
+
+					/* 1) print the idx, ip and key field */
+					trace_printk(
+						"epk[%d]: ip=%pI4 key=%u\n",
+						sizeof("epk[%d]: ip=%pI4 key=%u\n"),
+						idx,             /* 1st arg for %d */
+						&epk.ip4,        /* 2nd arg for %pI4 */
+						epk.key          /* 3rd arg for %u */
+					);
+				
+					/* 2) print the full 20-byte raw epk struct as hex */
+					trace_printk(
+						"epk[%d]: raw=%*ph\n",
+						sizeof("epk[%d]: raw=%*ph\n"),
+						idx,             /* 1st arg for %d */
+						(int)sizeof(epk),/* 2nd arg for the * in %*ph */
+						&epk             /* 3rd arg for the pointer in %*ph */
+					);
+
                     epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
                     if (epinfo) {
                         trace_printk(
@@ -211,8 +229,26 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             if (dbv) {
                 if (dbv->ip != tuple.daddr) {
                     epk.ip4    = dbv->ip;
-                    epk.family = AF_INET;
                     epk.key    = ENDPOINT_KEY_IPV4;
+
+					/* 1) print the idx, ip and key field */
+					trace_printk(
+						"epk[%d]: ip=%pI4 key=%u\n",
+						sizeof("epk[%d]: ip=%pI4 key=%u\n"),
+						idx,             /* 1st arg for %d */
+						&epk.ip4,        /* 2nd arg for %pI4 */
+						epk.key          /* 3rd arg for %u */
+					);
+				
+					/* 2) print the full 20-byte raw epk struct as hex */
+					trace_printk(
+						"epk[%d]: raw=%*ph\n",
+						sizeof("epk[%d]: raw=%*ph\n"),
+						idx,             /* 1st arg for %d */
+						(int)sizeof(epk),/* 2nd arg for the * in %*ph */
+						&epk             /* 3rd arg for the pointer in %*ph */
+					);
+					
                     epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
                     if (epinfo) {
                         trace_printk(
