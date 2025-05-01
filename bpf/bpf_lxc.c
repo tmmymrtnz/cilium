@@ -183,7 +183,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 					trace_printk(
 						"epk[%d]: ip=%pI4 key=%u\n",
 						sizeof("epk[%d]: ip=%pI4 key=%u\n"),
-						dbx.idx,             /* 1st arg for %d */
+						dbk.idx,             /* 1st arg for %d */
 						&epk.ip4,        /* 2nd arg for %pI4 */
 						epk.key          /* 3rd arg for %u */
 					);
