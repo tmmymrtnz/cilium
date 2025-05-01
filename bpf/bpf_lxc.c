@@ -171,25 +171,31 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             struct endpoint_key        epk;
             struct endpoint_info      *epinfo;
 
-            #pragma clang loop unroll(full)
-            for (dbk.idx = 0; dbk.idx < MAX_DUP_BACKENDS; dbk.idx++) {
-                dbv = map_lookup_elem(&dup_backends, &dbk);
-                if (!dbv)
-                    continue;
+			/* Iteration 0 */
+			dbk.idx = 0;
+			dbv = map_lookup_elem(&dup_backends, &dbk);
+			if (dbv) {
+				epk = (struct endpoint_key){ 0 };
+				epk.ip4 = dbv->ip;
+				epk.family = AF_INET;
+				epk.key = ENDPOINT_KEY_IPV4;
+				epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
+				if (epinfo)
+					bpf_clone_redirect(ctx, epinfo->ifindex, 0);
+			}
 
-                /* positional init of epk so we don't need .addr */
-                epk = (struct endpoint_key){ 0 };
-				epk.ip4    = dbv->ip;
-				epk.family    = AF_INET;
-				epk.key       = ENDPOINT_KEY_IPV4;
-
-                epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
-                if (!epinfo)
-                    continue;
-
-                /* clone & redirect into that pod’s veth */
-                bpf_clone_redirect(ctx, epinfo->ifindex, 0);
-            }
+			/* Iteration 1 */
+			dbk.idx = 1;
+			dbv = map_lookup_elem(&dup_backends, &dbk);
+			if (dbv) {
+				epk = (struct endpoint_key){ 0 };
+				epk.ip4 = dbv->ip;
+				epk.family = AF_INET;
+				epk.key = ENDPOINT_KEY_IPV4;
+				epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
+				if (epinfo)
+					bpf_clone_redirect(ctx, epinfo->ifindex, 0);
+			}
         }
     }
 
