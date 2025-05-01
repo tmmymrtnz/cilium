@@ -172,30 +172,57 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             struct endpoint_info      *epinfo;
 
 			/* Iteration 0 */
-			dbk.idx = 0;
-			dbv = map_lookup_elem(&dup_backends, &dbk);
-			if (dbv) {
-				epk = (struct endpoint_key){ 0 };
-				epk.ip4 = dbv->ip;
-				epk.family = AF_INET;
-				epk.key = ENDPOINT_KEY_IPV4;
-				epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
-				if (epinfo)
-					bpf_clone_redirect(ctx, epinfo->ifindex, 0);
-			}
+            dbk.idx = 0;
+            dbv = map_lookup_elem(&dup_backends, &dbk);
+            if (dbv) {
+                /* skip if this backend IP is exactly the one this packet was just delivered to */
+                if (dbv->ip != tuple.daddr) {
+                    epk = (struct endpoint_key){ 0 };
+                    epk.ip4    = dbv->ip;
+                    epk.family = AF_INET;
+                    epk.key    = ENDPOINT_KEY_IPV4;
+                    epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
+                    if (epinfo) {
+                        trace_printk("dup[0]: cloning to ifindex %d (ip=%pI4)\n",
+                                     epinfo->ifindex, sizeof(epk.ip4), &epk.ip4);
+                        bpf_clone_redirect(ctx, epinfo->ifindex, 0);
+                    } else {
+                        trace_printk("dup[0]: no epinfo for ip=%pI4\n",
+                                     sizeof(epk.ip4), &epk.ip4);
+                    }
+                } else {
+                    trace_printk("dup[0]: skipping self ip=%pI4\n",
+                                 sizeof(dbv->ip), &dbv->ip);
+                }
+            } else {
+                trace_printk("dup[0]: map entry empty\n");
+            }
 
-			/* Iteration 1 */
-			dbk.idx = 1;
-			dbv = map_lookup_elem(&dup_backends, &dbk);
-			if (dbv) {
-				epk = (struct endpoint_key){ 0 };
-				epk.ip4 = dbv->ip;
-				epk.family = AF_INET;
-				epk.key = ENDPOINT_KEY_IPV4;
-				epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
-				if (epinfo)
-					bpf_clone_redirect(ctx, epinfo->ifindex, 0);
-			}
+            /* Iteration 1 */
+            dbk.idx = 1;
+            dbv = map_lookup_elem(&dup_backends, &dbk);
+            if (dbv) {
+                if (dbv->ip != tuple.daddr) {
+                    epk = (struct endpoint_key){ 0 };
+                    epk.ip4    = dbv->ip;
+                    epk.family = AF_INET;
+                    epk.key    = ENDPOINT_KEY_IPV4;
+                    epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
+                    if (epinfo) {
+                        trace_printk("dup[1]: cloning to ifindex %d (ip=%pI4)\n",
+                                     epinfo->ifindex, sizeof(epk.ip4), &epk.ip4);
+                        bpf_clone_redirect(ctx, epinfo->ifindex, 0);
+                    } else {
+                        trace_printk("dup[1]: no epinfo for ip=%pI4\n",
+                                     sizeof(epk.ip4), &epk.ip4);
+                    }
+                } else {
+                    trace_printk("dup[1]: skipping self ip=%pI4\n",
+                                 sizeof(dbv->ip), &dbv->ip);
+                }
+            } else {
+                trace_printk("dup[1]: map entry empty\n");
+            }
         }
     }
 
