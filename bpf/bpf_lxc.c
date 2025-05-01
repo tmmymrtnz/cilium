@@ -68,39 +68,39 @@
                  _s, _d);                                                     \
 } while (0)
 
-/* Pack 8 bytes starting at ptr into a u64 (big-endian) */
-#define PACK_U64(ptr) (                                                        \
-    (u64)((u8 *)(ptr))[0] << 56 | (u64)((u8 *)(ptr))[1] << 48 |                \
-    (u64)((u8 *)(ptr))[2] << 40 | (u64)((u8 *)(ptr))[3] << 32 |                \
-    (u64)((u8 *)(ptr))[4] << 24 | (u64)((u8 *)(ptr))[5] << 16 |                \
-    (u64)((u8 *)(ptr))[6] <<  8 | (u64)((u8 *)(ptr))[7]                        \
+/* Pack 8 bytes starting at ptr into a __u64 (big-endian) */
+#define PACK_U64(ptr) (                                                       \
+    (__u64)((__u8*)(ptr))[0] << 56 | (__u64)((__u8*)(ptr))[1] << 48 |         \
+    (__u64)((__u8*)(ptr))[2] << 40 | (__u64)((__u8*)(ptr))[3] << 32 |         \
+    (__u64)((__u8*)(ptr))[4] << 24 | (__u64)((__u8*)(ptr))[5] << 16 |         \
+    (__u64)((__u8*)(ptr))[6] <<  8 | (__u64)((__u8*)(ptr))[7]                \
 )
 
-/* Pack 4 bytes starting at ptr into a u32 (big-endian) */
-#define PACK_U32(ptr) (                                                        \
-    (u32)((u8 *)(ptr))[0] << 24 | (u32)((u8 *)(ptr))[1] << 16 |                \
-    (u32)((u8 *)(ptr))[2] <<  8 | (u32)((u8 *)(ptr))[3]                        \
+/* Pack 4 bytes starting at ptr into a __u32 (big-endian) */
+#define PACK_U32(ptr) (                                                       \
+    (__u32)((__u8*)(ptr))[0] << 24 | (__u32)((__u8*)(ptr))[1] << 16 |         \
+    (__u32)((__u8*)(ptr))[2] <<  8 | (__u32)((__u8*)(ptr))[3]                \
 )
 
-/* Print bytes [0..15] of `epk` in one go (idx, high64, low64) */
-#define PRINT_EPK_RAW_HEAD(idx, epk) do {                                       \
-    u64 _h0 = PACK_U64(&((epk).ip4));       /* offset 0 */                       \
-    u64 _h1 = PACK_U64((u8 *)&(epk) + 8);   /* bytes 8..15 */                    \
-    trace_printk(                                                               \
-      "epk[%d]: raw_head=%016llx%016llx\n",                                      \
-      sizeof("epk[0]: raw_head=00000000000000000000000000000000\n"),            \
-      (idx), _h0, _h1                                                         \
-    );                                                                          \
+/* Print bytes [0..15] of `epk` in one go (idx, hi64, lo64) */
+#define PRINT_EPK_RAW_HEAD(idx, epk) do {                                      \
+    __u64 _h0 = PACK_U64(&((epk).ip4));    /* bytes 0–7  */                    \
+    __u64 _h1 = PACK_U64((__u8*)&(epk) + 8); /* bytes 8–15 */                  \
+    trace_printk(                                                              \
+      "epk[%d]: raw_head=%016llx%016llx\n",                                     \
+      sizeof("epk[0]: raw_head=00000000000000000000000000000000\n"),           \
+      (idx), _h0, _h1                                                          \
+    );                                                                         \
 } while (0)
 
 /* Print bytes [16..19] of `epk` (idx, tail32) */
-#define PRINT_EPK_RAW_TAIL(idx, epk) do {                                       \
-    u32 _t = PACK_U32((u8 *)&(epk) + 16); /* bytes 16..19 */                    \
-    trace_printk(                                                               \
-      "epk[%d]: raw_tail=%08x\n",                                               \
-      sizeof("epk[0]: raw_tail=00000000\n"),                                    \
-      (idx), _t                                                                \
-    );                                                                          \
+#define PRINT_EPK_RAW_TAIL(idx, epk) do {                                      \
+    __u32 _t = PACK_U32((__u8*)&(epk) + 16); /* bytes 16–19 */                 \
+    trace_printk(                                                              \
+      "epk[%d]: raw_tail=%08x\n",                                              \
+      sizeof("epk[0]: raw_tail=00000000\n"),                                   \
+      (idx), _t                                                               \
+    );                                                                         \
 } while (0)
 
 static __always_inline int
