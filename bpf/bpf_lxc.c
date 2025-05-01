@@ -183,7 +183,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 					trace_printk(
 						"epk[%d]: ip=%pI4 key=%u\n",
 						sizeof("epk[%d]: ip=%pI4 key=%u\n"),
-						idx,             /* 1st arg for %d */
+						dbx.idx,             /* 1st arg for %d */
 						&epk.ip4,        /* 2nd arg for %pI4 */
 						epk.key          /* 3rd arg for %u */
 					);
@@ -192,7 +192,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 					trace_printk(
 						"epk[%d]: raw=%*ph\n",
 						sizeof("epk[%d]: raw=%*ph\n"),
-						idx,             /* 1st arg for %d */
+						dbk.idx,             /* 1st arg for %d */
 						(int)sizeof(epk),/* 2nd arg for the * in %*ph */
 						&epk             /* 3rd arg for the pointer in %*ph */
 					);
@@ -235,7 +235,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 					trace_printk(
 						"epk[%d]: ip=%pI4 key=%u\n",
 						sizeof("epk[%d]: ip=%pI4 key=%u\n"),
-						idx,             /* 1st arg for %d */
+						dbk.idx,             /* 1st arg for %d */
 						&epk.ip4,        /* 2nd arg for %pI4 */
 						epk.key          /* 3rd arg for %u */
 					);
@@ -244,11 +244,11 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 					trace_printk(
 						"epk[%d]: raw=%*ph\n",
 						sizeof("epk[%d]: raw=%*ph\n"),
-						idx,             /* 1st arg for %d */
+						dbk.idx,             /* 1st arg for %d */
 						(int)sizeof(epk),/* 2nd arg for the * in %*ph */
 						&epk             /* 3rd arg for the pointer in %*ph */
 					);
-					
+
                     epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
                     if (epinfo) {
                         trace_printk(
