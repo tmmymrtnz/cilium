@@ -224,13 +224,14 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 
                     epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
                     if (epinfo) {
-                        eth->h_dest[0] = epinfo->mac[0];
-                        eth->h_dest[1] = epinfo->mac[1];
-                        eth->h_dest[2] = epinfo->mac[2];
-                        eth->h_dest[3] = epinfo->mac[3];
-                        eth->h_dest[4] = epinfo->mac[4];
-                        eth->h_dest[5] = epinfo->mac[5];
-						
+                        /* Copy 6-byte MAC from __u64 epinfo->mac into eth->h_dest */
+                        __u8 *dst = eth->h_dest;
+                        __u8 *src = (void *)&epinfo->mac;
+                        #pragma unroll
+                        for (int i = 0; i < ETH_ALEN; i++) {
+                            dst[i] = src[i];
+                        }
+
                         trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
                                      sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
                                      idx, epinfo->ifindex, &epk.ip4);
