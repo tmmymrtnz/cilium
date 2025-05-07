@@ -227,8 +227,10 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                         /* Copy 6-byte MAC from __u64 epinfo->mac into eth->h_dest */
                         __u8 *dst = eth->h_dest;
                         __u8 *src = (void *)&epinfo->mac;
+						int i;
+						
                         #pragma unroll
-                        for (int i = 0; i < ETH_ALEN; i++) {
+                        for (i = 0; i < ETH_ALEN; i++) {
                             dst[i] = src[i];
                         }
 
