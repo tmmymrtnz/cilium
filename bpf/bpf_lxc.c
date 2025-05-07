@@ -224,10 +224,13 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 
                     epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
                     if (epinfo) {
-                        /* Rewrite destination MAC via helper (avoids verifier spill issue) */
-                        bpf_skb_store_bytes(ctx, 0        /* offset of h_dest */,
-                                            epinfo->mac, ETH_ALEN, 0);
-
+                        eth->h_dest[0] = epinfo->mac[0];
+                        eth->h_dest[1] = epinfo->mac[1];
+                        eth->h_dest[2] = epinfo->mac[2];
+                        eth->h_dest[3] = epinfo->mac[3];
+                        eth->h_dest[4] = epinfo->mac[4];
+                        eth->h_dest[5] = epinfo->mac[5];
+						
                         trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
                                      sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
                                      idx, epinfo->ifindex, &epk.ip4);
