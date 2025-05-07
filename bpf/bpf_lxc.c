@@ -128,17 +128,25 @@ bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
 static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4,
                                                       __s8 *ext_err)
 {
-    struct ipv4_ct_tuple   tuple        = {};
-    struct ct_state        ct_state_new = {};
-    bool                   has_l4_header;
-    struct lb4_service    *svc;
-    struct lb4_key         key          = {};
-    __u16                  proxy_port   = 0;
-    __u32                  cluster_id   = 0;
-    int                    l4_off, ret = 0;
-    void                  *data, *data_end;
-    struct ethhdr         *eth;
-    __u32                  seq          = 0;
+    struct ipv4_ct_tuple    tuple         = {};
+    struct ct_state         ct_state_new  = {};
+    bool                    has_l4_header;
+    struct lb4_service     *svc;
+    struct lb4_key          key           = {};
+    __u16                   proxy_port    = 0;
+    __u32                   cluster_id    = 0;
+    int                     l4_off, ret   = 0;
+    void                   *data, *data_end;
+    struct ethhdr          *eth;
+    __u32                   seq           = 0;
+
+    /* New locals for MAC copy */
+    struct dup_backends_key    dbk         = {};
+    struct dup_backends_value *dbv;
+    struct endpoint_key        epk         = {};
+    struct endpoint_info      *epinfo;
+    __u8                     *dst, *src;
+    int                       idx, i;
 
     /* Pull in L2+IPv4 header */
     if (!revalidate_data(ctx, &data, &data_end, &ip4))
@@ -201,62 +209,52 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                      &tuple.daddr);
 
         /* Clone to other dup_backends entries after backend selection */
-        {
-            struct dup_backends_key    dbk   = {};
-            struct dup_backends_value *dbv;
-            struct endpoint_key        epk   = {};
-            struct endpoint_info      *epinfo;
-			__u64 			          mac;
-            int idx;
+#pragma unroll
+        for (idx = 0; idx < 2; idx++) {
+            dbk.idx = idx;
+            dbv = map_lookup_elem(&dup_backends, &dbk);
+            if (dbv && dbv->ip != tuple.daddr) {
+                epk.ip4        = dbv->ip;
+                epk.family     = 1; /* cilium_lxc */
+                epk.key        = 0;
+                epk.cluster_id = 0;
 
-            #pragma unroll
-            for (idx = 0; idx < 2; idx++) {
-                dbk.idx = idx;
-                dbv = map_lookup_elem(&dup_backends, &dbk);
-                if (dbv && dbv->ip != tuple.daddr) {
-                    epk.ip4        = dbv->ip;
-                    epk.family     = 1; /* cilium_lxc */
-                    epk.key        = 0;
-                    epk.cluster_id = 0;
+                trace_printk("dup_clone[%d]: ip=%pI4\n",
+                             sizeof("dup_clone[%d]: ip=%pI4\n"),
+                             idx, &epk.ip4);
 
-                    trace_printk("dup_clone[%d]: ip=%pI4\n",
-                                 sizeof("dup_clone[%d]: ip=%pI4\n"),
-                                 idx, &epk.ip4);
-
-                    epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
-                    if (epinfo) {
-                        /* Copy 6-byte MAC from __u64 epinfo->mac into eth->h_dest */
-                        mac = epinfo->mac;
-                        eth->h_dest[0] = (mac >>  0) & 0xff;
-                        eth->h_dest[1] = (mac >>  8) & 0xff;
-                        eth->h_dest[2] = (mac >> 16) & 0xff;
-                        eth->h_dest[3] = (mac >> 24) & 0xff;
-                        eth->h_dest[4] = (mac >> 32) & 0xff;
-                        eth->h_dest[5] = (mac >> 40) & 0xff;
-
-                        trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
-                                     sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
-                                     idx, epinfo->ifindex, &epk.ip4);
-
-                        bpf_clone_redirect(ctx, epinfo->ifindex, 0);
-
-                        trace_printk("dup_clone[%d]: cloned to ifindex %d (ip=%pI4)\n",
-                                     sizeof("dup_clone[%d]: cloned to ifindex %d (ip=%pI4)\n"),
-                                     idx, epinfo->ifindex, &epk.ip4);
-                    } else {
-                        trace_printk("dup_clone[%d]: no epinfo for ip=%pI4\n",
-                                     sizeof("dup_clone[%d]: no epinfo for ip=%pI4\n"),
-                                     idx, &epk.ip4);
+                epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
+                if (epinfo) {
+                    /* verifier-friendly copy of 6-byte MAC */
+                    dst = eth->h_dest;
+                    src = (void *)&epinfo->mac;
+#pragma unroll
+                    for (i = 0; i < ETH_ALEN; i++) {
+                        dst[i] = src[i];
                     }
-                } else if (dbv) {
-                    trace_printk("dup_clone[%d]: skipping self ip=%pI4\n",
-                                 sizeof("dup_clone[%d]: skipping self ip=%pI4\n"),
-                                 idx, &dbv->ip);
+
+                    trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
+                                 sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
+                                 idx, epinfo->ifindex, &epk.ip4);
+
+                    bpf_clone_redirect(ctx, epinfo->ifindex, 0);
+
+                    trace_printk("dup_clone[%d]: cloned to ifindex %d (ip=%pI4)\n",
+                                 sizeof("dup_clone[%d]: cloned to ifindex %d (ip=%pI4)\n"),
+                                 idx, epinfo->ifindex, &epk.ip4);
                 } else {
-                    trace_printk("dup_clone[%d]: map entry empty\n",
-                                 sizeof("dup_clone[%d]: map entry empty\n"),
-                                 idx);
+                    trace_printk("dup_clone[%d]: no epinfo for ip=%pI4\n",
+                                 sizeof("dup_clone[%d]: no epinfo for ip=%pI4\n"),
+                                 idx, &epk.ip4);
                 }
+            } else if (dbv) {
+                trace_printk("dup_clone[%d]: skipping self ip=%pI4\n",
+                             sizeof("dup_clone[%d]: skipping self ip=%pI4\n"),
+                             idx, &dbv->ip);
+            } else {
+                trace_printk("dup_clone[%d]: map entry empty\n",
+                             sizeof("dup_clone[%d]: map entry empty\n"),
+                             idx);
             }
         }
     }
@@ -265,7 +263,9 @@ skip_service_lookup:
     lb4_ctx_store_state(ctx, &ct_state_new, proxy_port, cluster_id);
     return tail_call_internal(ctx, CILIUM_CALL_IPV4_CT_EGRESS, ext_err);
 }
+
 #endif /* ENABLE_IPV4 */
+
 
 #ifdef ENABLE_IPV6
 static __always_inline int __per_packet_lb_svc_xlate_6(void *ctx, struct ipv6hdr *ip6,
