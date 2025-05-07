@@ -211,8 +211,8 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             dbv = map_lookup_elem(&dup_backends, &dbk);
             if (dbv) {
                 if (dbv->ip != tuple.daddr) {
-                    epk.ip4    = dbv->ip;
-                    epk.key    = ENDPOINT_KEY_IPV4;
+					epk.ip4 = bpf_htonl(dbv->ip);
+					epk.key = bpf_htonl(ENDPOINT_KEY_IPV4);
 
 					/* 1) print the idx, ip and key field */
 					trace_printk(
@@ -258,8 +258,8 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             dbv = map_lookup_elem(&dup_backends, &dbk);
             if (dbv) {
                 if (dbv->ip != tuple.daddr) {
-                    epk.ip4    = dbv->ip;
-                    epk.key    = ENDPOINT_KEY_IPV4;
+					epk.ip4 = bpf_htonl(dbv->ip);
+					epk.key = bpf_htonl(ENDPOINT_KEY_IPV4);
 
 					/* 1) print the idx, ip and key field */
 					trace_printk(
