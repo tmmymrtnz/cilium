@@ -34,6 +34,7 @@
 #include "lib/identity.h"
 #include "lib/policy.h"
 #include "lib/mcast.h"
+#include "lib/endian.h"
 
 /* Override LB_SELECTION ... */
 #undef LB_SELECTION
@@ -212,7 +213,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             if (dbv) {
                 if (dbv->ip != tuple.daddr) {
 					epk.ip4 = bpf_htonl(dbv->ip);
-					epk.key = bpf_htonl(ENDPOINT_KEY_IPV4);
+					epk.key = ENDPOINT_KEY_IPV4;
 
 					/* 1) print the idx, ip and key field */
 					trace_printk(
@@ -259,7 +260,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             if (dbv) {
                 if (dbv->ip != tuple.daddr) {
 					epk.ip4 = bpf_htonl(dbv->ip);
-					epk.key = bpf_htonl(ENDPOINT_KEY_IPV4);
+					epk.key = ENDPOINT_KEY_IPV4;
 
 					/* 1) print the idx, ip and key field */
 					trace_printk(
