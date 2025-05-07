@@ -125,8 +125,6 @@ bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
 
 #ifdef ENABLE_IPV4
 
-#ifdef ENABLE_IPV4
-
 static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4,
                                                       __s8 *ext_err)
 {
