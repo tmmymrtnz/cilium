@@ -209,10 +209,11 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             struct dup_backends_value *dbv;
             struct endpoint_key        epk   = {};
             struct endpoint_info      *epinfo;
+            int idx;
 
             /* Iterate over dup_backends (max 2 entries for verifier) */
             #pragma unroll
-            for (int idx = 0; idx < 2; idx++) {
+            for (idx = 0; idx < 2; idx++) {
                 dbk.idx = idx;
                 dbv = map_lookup_elem(&dup_backends, &dbk);
                 if (dbv && dbv->ip != tuple.daddr) {
@@ -231,7 +232,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                     if (epinfo) {
                         /* Update destination MAC */
                         __builtin_memcpy(eth->h_dest, epinfo->mac, ETH_ALEN);
-                        PRINT_MAC_PAIR("dup_clone[%d]: ", eth->h_dest, epinfo->mac);
+                        PRINT_MAC_PAIR("dup_clone[%d]: ", eth->h_source, eth->h_dest);
                         trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
                                      sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
                                      idx, epinfo->ifindex, &epk.ip4);
