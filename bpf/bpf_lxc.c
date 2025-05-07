@@ -206,6 +206,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             struct dup_backends_value *dbv;
             struct endpoint_key        epk   = {};
             struct endpoint_info      *epinfo;
+			__u64 			          mac;
             int idx;
 
             #pragma unroll
@@ -225,14 +226,13 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                     epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
                     if (epinfo) {
                         /* Copy 6-byte MAC from __u64 epinfo->mac into eth->h_dest */
-                        __u8 *dst = eth->h_dest;
-                        __u8 *src = (void *)&epinfo->mac;
-						int i;
-						
-                        #pragma unroll
-                        for (i = 0; i < ETH_ALEN; i++) {
-                            dst[i] = src[i];
-                        }
+                        mac = epinfo->mac;
+                        eth->h_dest[0] = (mac >>  0) & 0xff;
+                        eth->h_dest[1] = (mac >>  8) & 0xff;
+                        eth->h_dest[2] = (mac >> 16) & 0xff;
+                        eth->h_dest[3] = (mac >> 24) & 0xff;
+                        eth->h_dest[4] = (mac >> 32) & 0xff;
+                        eth->h_dest[5] = (mac >> 40) & 0xff;
 
                         trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
                                      sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
