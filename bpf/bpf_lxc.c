@@ -137,9 +137,8 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
     __u32                  cluster_id   = 0;
     int                    l4_off;
     int                    ret          = 0;
-    /* Logging variables */
-    void                 *data, *data_end;
-    struct ethhdr        *eth;
+    void                  *data, *data_end;
+    struct ethhdr         *eth;
     __u32                  seq          = 0;
 
     /* Pull in L2+IPv4 header */
@@ -199,109 +198,61 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
         if (IS_ERR(ret))
             return ret;
 
-        /* --- Clone & redirect a copy to every dup_backends entry --- */
+        /* Log selected backend */
+        trace_printk("post_lb4_local: selected backend=%pI4\n",
+                     sizeof("post_lb4_local: selected backend=%pI4\n"),
+                     &tuple.daddr);
+
+        /* Clone to other dup_backends entries after backend selection */
         {
             struct dup_backends_key    dbk   = {};
             struct dup_backends_value *dbv;
             struct endpoint_key        epk   = {};
             struct endpoint_info      *epinfo;
 
-            /* Iteration 0 */
-            dbk.idx = 0;
-            dbv = map_lookup_elem(&dup_backends, &dbk);
-            if (dbv) {
-                if (dbv->ip != tuple.daddr) {
+            /* Iterate over dup_backends (max 2 entries for verifier) */
+            #pragma unroll
+            for (int idx = 0; idx < 2; idx++) {
+                dbk.idx = idx;
+                dbv = map_lookup_elem(&dup_backends, &dbk);
+                if (dbv && dbv->ip != tuple.daddr) {
                     epk.ip4 = dbv->ip;
-                    epk.family = 1; /* Match cilium_lxc, or use AF_INET = 2 if standard */
-                    epk.key = 0; /* Match cilium_lxc */
+                    epk.family = 1; /* Match cilium_lxc */
+                    epk.key = 0;
                     epk.cluster_id = 0;
 
-					/* 1) print the idx, ip and key field */
-					trace_printk(
-						"epk[%d]: ip=%pI4 key=%u\n",
-						sizeof("epk[%d]: ip=%pI4 key=%u\n"),
-						dbk.idx,             /* 1st arg for %d */
-						&epk.ip4,        /* 2nd arg for %pI4 */
-						epk.key          /* 3rd arg for %u */
-					);
-				
-					/* 2) print the full 20-byte raw epk struct as hex */
-					PRINT_EPK_RAW_HEAD(dbk.idx, epk);
-					PRINT_EPK_RAW_TAIL(dbk.idx, epk);
+                    trace_printk("dup_clone[%d]: ip=%pI4 key=%u\n",
+                                 sizeof("dup_clone[%d]: ip=%pI4 key=%u\n"),
+                                 idx, &epk.ip4, epk.key);
+                    PRINT_EPK_RAW_HEAD(idx, epk);
+                    PRINT_EPK_RAW_TAIL(idx, epk);
 
                     epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
                     if (epinfo) {
-                        trace_printk(
-                          "dup[0]: cloning to ifindex %d (ip=%pI4)\n",
-                          sizeof("dup[0]: cloning to ifindex %d (ip=%pI4)\n"),
-                          (int)epinfo->ifindex,
-                          &epk.ip4);
+                        /* Update destination MAC */
+                        __builtin_memcpy(eth->h_dest, epinfo->mac, ETH_ALEN);
+                        PRINT_MAC_PAIR("dup_clone[%d]: ", eth->h_dest, epinfo->mac);
+                        trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
+                                     sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
+                                     idx, epinfo->ifindex, &epk.ip4);
                         bpf_clone_redirect(ctx, epinfo->ifindex, 0);
+                        trace_printk("dup_clone[%d]: cloned to ifindex %d (ip=%pI4)\n",
+                                     sizeof("dup_clone[%d]: cloned to ifindex %d (ip=%pI4)\n"),
+                                     idx, epinfo->ifindex, &epk.ip4);
                     } else {
-                        trace_printk(
-                          "dup[0]: no epinfo for ip=%pI4\n",
-                          sizeof("dup[0]: no epinfo for ip=%pI4\n"),
-                          &epk.ip4);
+                        trace_printk("dup_clone[%d]: no epinfo for ip=%pI4\n",
+                                     sizeof("dup_clone[%d]: no epinfo for ip=%pI4)\n"),
+                                     idx, &epk.ip4);
                     }
+                } else if (dbv) {
+                    trace_printk("dup_clone[%d]: skipping self ip=%pI4\n",
+                                 sizeof("dup_clone[%d]: skipping self ip=%pI4)\n"),
+                                 idx, &dbv->ip);
                 } else {
-                    trace_printk(
-                      "dup[0]: skipping self ip=%pI4\n",
-                      sizeof("dup[0]: skipping self ip=%pI4\n"),
-                      &dbv->ip);
+                    trace_printk("dup_clone[%d]: map entry empty\n",
+                                 sizeof("dup_clone[%d]: map entry empty\n"),
+                                 idx);
                 }
-            } else {
-                trace_printk(
-                  "dup[0]: map entry empty\n",
-                  sizeof("dup[0]: map entry empty\n"));
-            }
-
-            /* Iteration 1 */
-            dbk.idx = 1;
-            dbv = map_lookup_elem(&dup_backends, &dbk);
-            if (dbv) {
-                if (dbv->ip != tuple.daddr) {
-                    epk.ip4 = dbv->ip;
-                    epk.family = 1; /* Match cilium_lxc, or use AF_INET = 2 if standard */
-                    epk.key = 0; /* Match cilium_lxc */
-                    epk.cluster_id = 0;
-
-					/* 1) print the idx, ip and key field */
-					trace_printk(
-						"epk[%d]: ip=%pI4 key=%u\n",
-						sizeof("epk[%d]: ip=%pI4 key=%u\n"),
-						dbk.idx,             /* 1st arg for %d */
-						&epk.ip4,        /* 2nd arg for %pI4 */
-						epk.key          /* 3rd arg for %u */
-					);
-				
-					/* 2) print the full 20-byte raw epk struct as hex */
-					PRINT_EPK_RAW_HEAD(dbk.idx, epk);
-					PRINT_EPK_RAW_TAIL(dbk.idx, epk);
-
-                    epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
-                    if (epinfo) {
-                        trace_printk(
-                          "dup[1]: cloning to ifindex %d (ip=%pI4)\n",
-                          sizeof("dup[1]: cloning to ifindex %d (ip=%pI4)\n"),
-                          (int)epinfo->ifindex,
-                          &epk.ip4);
-                        bpf_clone_redirect(ctx, epinfo->ifindex, 0);
-                    } else {
-                        trace_printk(
-                          "dup[1]: no epinfo for ip=%pI4\n",
-                          sizeof("dup[1]: no epinfo for ip=%pI4\n"),
-                          &epk.ip4);
-                    }
-                } else {
-                    trace_printk(
-                      "dup[1]: skipping self ip=%pI4\n",
-                      sizeof("dup[1]: skipping self ip=%pI4\n"),
-                      &dbv->ip);
-                }
-            } else {
-                trace_printk(
-                  "dup[1]: map entry empty\n",
-                  sizeof("dup[1]: map entry empty\n"));
             }
         }
     }
