@@ -231,8 +231,8 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                     epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
                     if (epinfo) {
                         /* Update destination MAC */
-                        __builtin_memcpy(eth->h_dest, epinfo->mac, ETH_ALEN);
-                        PRINT_MAC_PAIR("dup_clone[%d]: ", eth->h_source, eth->h_dest);
+                        __builtin_memcpy(eth->h_dest, &epinfo->mac, ETH_ALEN);
+                        PRINT_MAC_PAIR("dup_clone:", eth->h_source, eth->h_dest);
                         trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
                                      sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
                                      idx, epinfo->ifindex, &epk.ip4);
