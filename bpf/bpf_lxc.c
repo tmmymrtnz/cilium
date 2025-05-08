@@ -183,6 +183,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
     __u64                      mac;
     __u8                       new_mac[ETH_ALEN];
     int                        idx;
+    union macaddr              host_mac;        /* declare up front */
 
     /* Pull in L2+IPv4 header */
     if (!revalidate_data(ctx, &data, &data_end, &ip4))
@@ -245,8 +246,8 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
         /* Clone to each “other” backend */
 #pragma unroll
         for (idx = 0; idx < 2; idx++) {
-            struct dup_backends_key key = { .idx = idx };
-            dbv = map_lookup_elem(&dup_backends, &key);
+            dbk.idx = idx;
+            dbv = map_lookup_elem(&dup_backends, &dbk);
             if (!dbv || dbv->ip == tuple.daddr)
                 continue;
 
@@ -267,7 +268,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                 continue;
             }
 
-            /* assemble target MAC */
+            /* build the MAC bytes */
             mac = epinfo->mac;
             new_mac[0] = (mac >>  0) & 0xff;
             new_mac[1] = (mac >>  8) & 0xff;
@@ -276,26 +277,18 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             new_mac[4] = (mac >> 32) & 0xff;
             new_mac[5] = (mac >> 40) & 0xff;
 
-            /* overwrite full Ethernet header on the clone */
-            {
-                /* dst = pod MAC */
-                bpf_skb_store_bytes(ctx, 0,
-                                    new_mac, ETH_ALEN,
-                                    0);
-                /* src = host-veth MAC */
-                union macaddr host_mac = THIS_INTERFACE_MAC;
-                bpf_skb_store_bytes(ctx, 6,
-                                    host_mac.addr, ETH_ALEN,
-                                    0);
-            }
+            /* overwrite Ethernet header on clone: dst=pod, src=host */
+            host_mac = THIS_INTERFACE_MAC;
+            bpf_skb_store_bytes(ctx, 0,           /* offset 0: dst MAC */
+                                new_mac, ETH_ALEN, 0);
+            bpf_skb_store_bytes(ctx, ETH_ALEN,    /* offset 6: src MAC */
+                                host_mac.addr, ETH_ALEN, 0);
 
             trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
                          sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
                          idx, epinfo->ifindex, &epk.ip4);
 
-            /* send it into the pod’s ingress so it does NOT hit
-             * the container-egress hook and loop
-             */
+            /* inject at ingress so it never re-hits egress */
             bpf_clone_redirect(ctx,
                                epinfo->ifindex,
                                BPF_F_INGRESS);
@@ -312,6 +305,7 @@ skip_service_lookup:
 }
 
 #endif /* ENABLE_IPV4 */
+
 
 #ifdef ENABLE_IPV6
 static __always_inline int __per_packet_lb_svc_xlate_6(void *ctx, struct ipv6hdr *ip6,
