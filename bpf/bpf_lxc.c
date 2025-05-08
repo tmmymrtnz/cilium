@@ -163,11 +163,11 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                                                       __s8 *ext_err)
 {
     /* --- original locals --- */
-    struct ipv4_ct_tuple    tuple         = { };
-    struct ct_state         ct_state_new  = { };
+    struct ipv4_ct_tuple    tuple         = {};
+    struct ct_state         ct_state_new  = {};
     bool                    has_l4_header;
     struct lb4_service     *svc;
-    struct lb4_key          key           = { };
+    struct lb4_key          key           = {};
     __u16                   proxy_port    = 0;
     __u32                   cluster_id    = 0;
     int                     l4_off, ret   = 0;
@@ -176,18 +176,26 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
     __u32                   seq           = 0;
 
     /* --- new locals for duplication --- */
-    struct dup_backends_key    dbk      = { };
+    struct dup_backends_key    dbk      = {};
     struct dup_backends_value *dbv;
-    struct endpoint_key        epk      = { };
+    struct endpoint_key        epk      = {};
     struct endpoint_info      *epinfo;
     __u64                      mac;
     __u8                       new_mac[ETH_ALEN];
     int                        idx;
     union macaddr              host_mac = THIS_INTERFACE_MAC;
 
-    /* pointers for L4 header access (must be declared up front for C89) */
-    struct tcphdr *tcp = NULL;
-    struct udphdr *udp = NULL;
+    /* Prototypes for the checksum‐rebuild helpers */
+    static __always_inline int bpf_l3_csum_replace(void *ctx,
+                                                   __u32 offset,
+                                                   __u32 from,
+                                                   __u32 to,
+                                                   __u32 flags);
+    static __always_inline int bpf_l4_csum_replace(void *ctx,
+                                                   __u32 offset,
+                                                   __u32 from,
+                                                   __u32 to,
+                                                   __u32 flags);
 
     /* Pull in L2+IPv4 header */
     if (!revalidate_data(ctx, &data, &data_end, &ip4))
@@ -196,12 +204,10 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 
     /* Extract TCP sequence number if applicable */
     has_l4_header = ipv4_has_l4_header(ip4);
-    if (has_l4_header) {
-        if (ip4->protocol == IPPROTO_TCP) {
-            tcp = (void *)ip4 + ipv4_hdrlen(ip4);
-            if ((void *)(tcp + 1) <= data_end)
-                seq = bpf_ntohl(tcp->seq);
-        }
+    if (has_l4_header && ip4->protocol == IPPROTO_TCP) {
+        struct tcphdr *tcp = (void *)ip4 + ipv4_hdrlen(ip4);
+        if ((void *)(tcp + 1) <= data_end)
+            seq = bpf_ntohl(tcp->seq);
     }
 
     trace_printk("__per_packet_lb_svc_xlate_4: src=%pI4 dst=%pI4 seq=%u\n",
@@ -276,14 +282,12 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 
             /* 1) Rewrite IPv4 dst and fix checksums */
             bpf_skb_store_bytes(ctx,
-                                ETH_HLEN + offsetof(struct iphdr, daddr),
-                                &dbv->ip, sizeof(dbv->ip), 0);
-
+                               ETH_HLEN + offsetof(struct iphdr, daddr),
+                               &dbv->ip, sizeof(dbv->ip), 0);
             bpf_l3_csum_replace(ctx,
                                 ETH_HLEN + offsetof(struct iphdr, check),
                                 tuple.daddr, dbv->ip,
                                 sizeof(dbv->ip));
-
             if (has_l4_header) {
                 if (ip4->protocol == IPPROTO_TCP) {
                     bpf_l4_csum_replace(ctx,
@@ -291,7 +295,6 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                         tuple.daddr, dbv->ip,
                         sizeof(dbv->ip));
                 } else if (ip4->protocol == IPPROTO_UDP) {
-                    udp = (void *)ip4 + ipv4_hdrlen(ip4);
                     bpf_l4_csum_replace(ctx,
                         ETH_HLEN + l4_off + offsetof(struct udphdr, check),
                         tuple.daddr, dbv->ip,
@@ -299,7 +302,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                 }
             }
 
-            /* 2) Rebuild Ethernet header on clone: dst=pod, src=host */
+            /* 2) Rebuild Ethernet header on clone */
             mac = epinfo->mac;
             new_mac[0] = (mac >>  0) & 0xff;
             new_mac[1] = (mac >>  8) & 0xff;
@@ -310,7 +313,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 
             bpf_skb_store_bytes(ctx, 0,           /* dst MAC */
                                 new_mac, ETH_ALEN, 0);
-            bpf_skb_store_bytes(ctx, ETH_HLEN,    /* src MAC */
+            bpf_skb_store_bytes(ctx, ETH_ALEN,    /* src MAC */
                                 host_mac.addr, ETH_ALEN, 0);
 
             trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
