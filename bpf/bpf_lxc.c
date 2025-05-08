@@ -175,14 +175,14 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
     struct ethhdr          *eth;
     __u32                   seq           = 0;
 
-    /* --- new locals for MAC copy via bpf_skb_store_bytes --- */
+    /* --- new locals for duplication --- */
     struct dup_backends_key    dbk         = {};
     struct dup_backends_value *dbv;
     struct endpoint_key        epk         = {};
     struct endpoint_info      *epinfo;
     __u64                      mac;
     __u8                       new_mac[ETH_ALEN];
-    int                        idx, i;
+    int                        idx;
 
     /* Pull in L2+IPv4 header */
     if (!revalidate_data(ctx, &data, &data_end, &ip4))
@@ -197,7 +197,6 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             seq = bpf_ntohl(tcp->seq);
     }
 
-    /* Log entry details */
     trace_printk("__per_packet_lb_svc_xlate_4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
                  sizeof("__per_packet_lb_svc_xlate_4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
                  &ip4->saddr, &ip4->daddr, seq);
@@ -239,67 +238,71 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
         if (IS_ERR(ret))
             return ret;
 
-        /* Log selected backend */
         trace_printk("post_lb4_local: selected backend=%pI4\n",
                      sizeof("post_lb4_local: selected backend=%pI4\n"),
                      &tuple.daddr);
 
-        /* Clone to other dup_backends entries after backend selection */
+        /* Clone to each “other” backend */
 #pragma unroll
         for (idx = 0; idx < 2; idx++) {
-            dbk.idx = idx;
-            dbv = map_lookup_elem(&dup_backends, &dbk);
-            if (dbv && dbv->ip != tuple.daddr) {
-                epk.ip4        = dbv->ip;
-                epk.family     = 1; /* cilium_lxc */
-                epk.key        = 0;
-                epk.cluster_id = 0;
+            struct dup_backends_key key = { .idx = idx };
+            dbv = map_lookup_elem(&dup_backends, &key);
+            if (!dbv || dbv->ip == tuple.daddr)
+                continue;
 
-                trace_printk("dup_clone[%d]: ip=%pI4\n",
-                             sizeof("dup_clone[%d]: ip=%pI4\n"),
+            epk.ip4        = dbv->ip;
+            epk.family     = 1; /* cilium_lxc */
+            epk.key        = 0;
+            epk.cluster_id = 0;
+
+            trace_printk("dup_clone[%d]: ip=%pI4\n",
+                         sizeof("dup_clone[%d]: ip=%pI4\n"),
+                         idx, &epk.ip4);
+
+            epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
+            if (!epinfo) {
+                trace_printk("dup_clone[%d]: no epinfo for %pI4\n",
+                             sizeof("dup_clone[%d]: no epinfo for %pI4\n"),
                              idx, &epk.ip4);
-
-                epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
-                if (epinfo) {
-                    /* build the 6-byte MAC in stack */
-                    mac = epinfo->mac;
-                    new_mac[0] = (mac >>  0) & 0xff;
-                    new_mac[1] = (mac >>  8) & 0xff;
-                    new_mac[2] = (mac >> 16) & 0xff;
-                    new_mac[3] = (mac >> 24) & 0xff;
-                    new_mac[4] = (mac >> 32) & 0xff;
-                    new_mac[5] = (mac >> 40) & 0xff;
-
-                    /* copy each byte into the skb using your helper */
-					#pragma unroll
-					for (i = 0; i < ETH_ALEN; i++) {
-						/* use Clang’s built-in helper directly */
-						bpf_skb_store_bytes(ctx, i, &new_mac[i], 1, 0);
-					}				
-
-                    trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
-                                 sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
-                                 idx, epinfo->ifindex, &epk.ip4);
-
-                    bpf_clone_redirect(ctx, epinfo->ifindex, 0);
-
-                    trace_printk("dup_clone[%d]: cloned to ifindex %d (ip=%pI4)\n",
-                                 sizeof("dup_clone[%d]: cloned to ifindex %d (ip=%pI4)\n"),
-                                 idx, epinfo->ifindex, &epk.ip4);
-                } else {
-                    trace_printk("dup_clone[%d]: no epinfo for ip=%pI4\n",
-                                 sizeof("dup_clone[%d]: no epinfo for ip=%pI4\n"),
-                                 idx, &epk.ip4);
-                }
-            } else if (dbv) {
-                trace_printk("dup_clone[%d]: skipping self ip=%pI4\n",
-                             sizeof("dup_clone[%d]: skipping self ip=%pI4\n"),
-                             idx, &dbv->ip);
-            } else {
-                trace_printk("dup_clone[%d]: map entry empty\n",
-                             sizeof("dup_clone[%d]: map entry empty\n"),
-                             idx);
+                continue;
             }
+
+            /* assemble target MAC */
+            mac = epinfo->mac;
+            new_mac[0] = (mac >>  0) & 0xff;
+            new_mac[1] = (mac >>  8) & 0xff;
+            new_mac[2] = (mac >> 16) & 0xff;
+            new_mac[3] = (mac >> 24) & 0xff;
+            new_mac[4] = (mac >> 32) & 0xff;
+            new_mac[5] = (mac >> 40) & 0xff;
+
+            /* overwrite full Ethernet header on the clone */
+            {
+                /* dst = pod MAC */
+                bpf_skb_store_bytes(ctx, 0,
+                                    new_mac, ETH_ALEN,
+                                    0);
+                /* src = host-veth MAC */
+                union macaddr host_mac = THIS_INTERFACE_MAC;
+                bpf_skb_store_bytes(ctx, 6,
+                                    host_mac.addr, ETH_ALEN,
+                                    0);
+            }
+
+            trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
+                         sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
+                         idx, epinfo->ifindex, &epk.ip4);
+
+            /* send it into the pod’s ingress so it does NOT hit
+             * the container-egress hook and loop
+             */
+            bpf_clone_redirect(ctx,
+                               epinfo->ifindex,
+                               BPF_F_INGRESS);
+
+            trace_printk("dup_clone[%d]: cloned to ifindex %d\n",
+                         sizeof("dup_clone[%d]: cloned to ifindex %d\n"),
+                         idx, epinfo->ifindex);
         }
     }
 
@@ -309,7 +312,6 @@ skip_service_lookup:
 }
 
 #endif /* ENABLE_IPV4 */
-
 
 #ifdef ENABLE_IPV6
 static __always_inline int __per_packet_lb_svc_xlate_6(void *ctx, struct ipv6hdr *ip6,
