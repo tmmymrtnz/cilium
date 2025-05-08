@@ -112,37 +112,6 @@ bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
                   (ctx, ifindex, flags);
 }
 
-#ifndef BPF_SKB_STORE_BYTES_HELPER_H
-#define BPF_SKB_STORE_BYTES_HELPER_H
-
-/* helper number for skb_store_bytes */
-#ifndef BPF_FUNC_skb_store_bytes
-# define BPF_FUNC_skb_store_bytes 38
-#endif
-
-/* Must be non-static so the asm symbol bpf_call_base actually gets emitted. */
-/* Only takes r1–r5 and the helper ID (six args total) */
-long __bpf_call_base(long r1, long r2, long r3,
-                     long r4, long r5,
-                     long id) asm("bpf_call_base");
-
-static __always_inline int
-bpf_skb_store_bytes(void *ctx, __u32 offset,
-                    const void *from, __u32 len, __u64 flags)
-{
-    /* r1=ctx, r2=offset, r3=from, r4=len, r5=flags, id last */
-    return (int)__bpf_call_base(
-        (long)ctx,
-        (long)offset,
-        (long)from,
-        (long)len,
-        (long)flags,
-        BPF_FUNC_skb_store_bytes
-    );
-}
-
-#endif /* BPF_SKB_STORE_BYTES_HELPER_H */
-
 /* Per-packet LB ... */
 #if !defined(ENABLE_SOCKET_LB_FULL) || \
     defined(ENABLE_SOCKET_LB_HOST_ONLY) || \
@@ -270,8 +239,9 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                     /* copy each byte into the skb using your helper */
 					#pragma unroll
 					for (i = 0; i < ETH_ALEN; i++) {
-						bpf_skb_store_bytes(ctx, i, &new_mac[i], 1, 0);
-					}					
+						/* use Clang’s built-in helper directly */
+						__builtin_bpf_skb_store_bytes(ctx, i, &new_mac[i], 1, 0);
+					}				
 
                     trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
                                  sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
