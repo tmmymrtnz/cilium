@@ -112,6 +112,40 @@ bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
                   (ctx, ifindex, flags);
 }
 
+#ifndef BPF_SKB_STORE_BYTES_HELPER_H
+#define BPF_SKB_STORE_BYTES_HELPER_H
+
+/* helper number */
+#ifndef BPF_FUNC_skb_store_bytes
+# define BPF_FUNC_skb_store_bytes 38
+#endif
+
+static __always_inline int
+bpf_skb_store_bytes(void *ctx, __u32 offset,
+                    const void *from, __u32 len, __u64 flags)
+{
+    long ret;
+    register long r1 asm("r1") = (long)ctx;
+    register long r2 asm("r2") = (long)offset;
+    register long r3 asm("r3") = (long)from;
+    register long r4 asm("r4") = (long)len;
+    register long r5 asm("r5") = (long)flags;
+    /* 
+     * clang-for-BPF will lower this into exactly:
+     *   r0 = call BPF_FUNC_skb_store_bytes(r1,…,r5)
+     */
+    asm volatile (
+        "call %c[fn]\n"
+        : "=r"(ret)
+        : [fn] "i"(BPF_FUNC_skb_store_bytes),
+          "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
+        : "r0","r1","r2","r3","r4","r5","memory"
+    );
+    return (int)ret;
+}
+
+#endif /* BPF_SKB_STORE_BYTES_HELPER_H */
+
 /* Per-packet LB ... */
 #if !defined(ENABLE_SOCKET_LB_FULL) || \
     defined(ENABLE_SOCKET_LB_HOST_ONLY) || \
@@ -240,7 +274,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 					#pragma unroll
 					for (i = 0; i < ETH_ALEN; i++) {
 						/* use Clang’s built-in helper directly */
-						__builtin_bpf_skb_store_bytes(ctx, i, &new_mac[i], 1, 0);
+						bpf_skb_store_bytes(ctx, i, &new_mac[i], 1, 0);
 					}				
 
                     trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
