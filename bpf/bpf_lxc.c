@@ -112,6 +112,40 @@ bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
                   (ctx, ifindex, flags);
 }
 
+#ifndef BPF_SKB_STORE_BYTES_HELPER_H
+#define BPF_SKB_STORE_BYTES_HELPER_H
+
+/* id of the helper we want */
+#define BPF_FUNC_skb_store_bytes 38
+
+/* forward‐declare the intrinsic that the loader will patch into a BPF_CALL,
+ * up to six args in registers:
+ */
+static long __bpf_call_base(long nr, long r1, long r2,
+                            long r3, long r4, long r5, long r6)
+    asm("bpf_call_base");
+
+/* Helper: copy 'len' bytes from 'from' into the skb data at 'offset'.
+ * flags == 0 or BPF_F_RECOMPUTE_CSUM to fix checksums.
+ */
+static __always_inline int
+bpf_skb_store_bytes(void *ctx, __u32 offset,
+                    const void *from, __u32 len, __u64 flags)
+{
+    /* pass our five real args in r1–r5, leave r6==0 */
+    return (int)__bpf_call_base(
+        BPF_FUNC_skb_store_bytes,
+        (long)ctx,
+        (long)offset,
+        (long)from,
+        (long)len,
+        (long)flags,
+        0L
+    );
+}
+
+#endif /* BPF_SKB_STORE_BYTES_HELPER_H */
+
 /* Per-packet LB ... */
 #if !defined(ENABLE_SOCKET_LB_FULL) || \
     defined(ENABLE_SOCKET_LB_HOST_ONLY) || \
@@ -128,6 +162,7 @@ bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
 static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4,
                                                       __s8 *ext_err)
 {
+    /* --- original locals --- */
     struct ipv4_ct_tuple    tuple         = {};
     struct ct_state         ct_state_new  = {};
     bool                    has_l4_header;
@@ -140,13 +175,14 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
     struct ethhdr          *eth;
     __u32                   seq           = 0;
 
-    /* New locals for MAC copy */
+    /* --- new locals for MAC copy via bpf_skb_store_bytes --- */
     struct dup_backends_key    dbk         = {};
     struct dup_backends_value *dbv;
     struct endpoint_key        epk         = {};
     struct endpoint_info      *epinfo;
-    __u8                     *dst, *src;
-    int                       idx, i;
+    __u64                      mac;
+    __u8                       new_mac[ETH_ALEN];
+    int                        idx, i;
 
     /* Pull in L2+IPv4 header */
     if (!revalidate_data(ctx, &data, &data_end, &ip4))
@@ -225,12 +261,26 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 
                 epinfo = map_lookup_elem(&ENDPOINTS_MAP, &epk);
                 if (epinfo) {
-                    /* verifier-friendly copy of 6-byte MAC */
-                    dst = eth->h_dest;
-                    src = (void *)&epinfo->mac;
+                    /* build the 6-byte MAC in stack */
+                    mac = epinfo->mac;
+                    new_mac[0] = (mac >>  0) & 0xff;
+                    new_mac[1] = (mac >>  8) & 0xff;
+                    new_mac[2] = (mac >> 16) & 0xff;
+                    new_mac[3] = (mac >> 24) & 0xff;
+                    new_mac[4] = (mac >> 32) & 0xff;
+                    new_mac[5] = (mac >> 40) & 0xff;
+
+                    /* copy each byte into the skb using your helper */
 #pragma unroll
                     for (i = 0; i < ETH_ALEN; i++) {
-                        dst[i] = src[i];
+                        bpf_skb_store_bytes(
+                            ctx,
+                            /* offset 0 for h_dest[0] since eth->h_dest is packet-start */
+                            i,
+                            &new_mac[i],
+                            1,
+                            0
+                        );
                     }
 
                     trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
