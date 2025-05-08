@@ -121,22 +121,22 @@ bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
 #endif
 
 /* Must be non-static so the asm symbol bpf_call_base actually gets emitted. */
+/* Only takes r1–r5 and the helper ID (six args total) */
 long __bpf_call_base(long r1, long r2, long r3,
-                     long r4, long r5, long r6,
+                     long r4, long r5,
                      long id) asm("bpf_call_base");
 
 static __always_inline int
 bpf_skb_store_bytes(void *ctx, __u32 offset,
                     const void *from, __u32 len, __u64 flags)
 {
-    /* r1=ctx, r2=offset, r3=from, r4=len, r5=flags, r6=0, id last */
+    /* r1=ctx, r2=offset, r3=from, r4=len, r5=flags, id last */
     return (int)__bpf_call_base(
         (long)ctx,
         (long)offset,
         (long)from,
         (long)len,
         (long)flags,
-        0L,
         BPF_FUNC_skb_store_bytes
     );
 }
