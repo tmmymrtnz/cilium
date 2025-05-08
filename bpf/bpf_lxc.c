@@ -274,17 +274,10 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                     new_mac[5] = (mac >> 40) & 0xff;
 
                     /* copy each byte into the skb using your helper */
-#pragma unroll
-                    for (i = 0; i < ETH_ALEN; i++) {
-                        bpf_skb_store_bytes(
-                            ctx,
-                            /* offset 0 for h_dest[0] since eth->h_dest is packet-start */
-                            i,
-                            &new_mac[i],
-                            1,
-                            0
-                        );
-                    }
+					#pragma unroll
+					for (i = 0; i < ETH_ALEN; i++) {
+						bpf_skb_store_bytes(ctx, i, &new_mac[i], 1, 0);
+					}					
 
                     trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
                                  sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
