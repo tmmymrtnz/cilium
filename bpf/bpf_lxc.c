@@ -163,27 +163,31 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                                                       __s8 *ext_err)
 {
     /* --- original locals --- */
-    struct ipv4_ct_tuple    tuple        = {};
-    struct ct_state         ct_state_new = {};
+    struct ipv4_ct_tuple    tuple         = { };
+    struct ct_state         ct_state_new  = { };
     bool                    has_l4_header;
     struct lb4_service     *svc;
-    struct lb4_key          key          = {};
-    __u16                   proxy_port   = 0;
-    __u32                   cluster_id   = 0;
-    int                     l4_off, ret  = 0;
+    struct lb4_key          key           = { };
+    __u16                   proxy_port    = 0;
+    __u32                   cluster_id    = 0;
+    int                     l4_off, ret   = 0;
     void                   *data, *data_end;
     struct ethhdr          *eth;
-    __u32                   seq          = 0;
+    __u32                   seq           = 0;
 
     /* --- new locals for duplication --- */
-    struct dup_backends_key    dbk      = {};
+    struct dup_backends_key    dbk      = { };
     struct dup_backends_value *dbv;
-    struct endpoint_key        epk      = {};
+    struct endpoint_key        epk      = { };
     struct endpoint_info      *epinfo;
     __u64                      mac;
     __u8                       new_mac[ETH_ALEN];
     int                        idx;
     union macaddr              host_mac = THIS_INTERFACE_MAC;
+
+    /* pointers for L4 header access (must be declared up front for C89) */
+    struct tcphdr *tcp = NULL;
+    struct udphdr *udp = NULL;
 
     /* Pull in L2+IPv4 header */
     if (!revalidate_data(ctx, &data, &data_end, &ip4))
@@ -192,10 +196,12 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
 
     /* Extract TCP sequence number if applicable */
     has_l4_header = ipv4_has_l4_header(ip4);
-    if (has_l4_header && ip4->protocol == IPPROTO_TCP) {
-        struct tcphdr *tcp = (void*)ip4 + ipv4_hdrlen(ip4);
-        if ((void*)(tcp + 1) <= data_end)
-            seq = bpf_ntohl(tcp->seq);
+    if (has_l4_header) {
+        if (ip4->protocol == IPPROTO_TCP) {
+            tcp = (void *)ip4 + ipv4_hdrlen(ip4);
+            if ((void *)(tcp + 1) <= data_end)
+                seq = bpf_ntohl(tcp->seq);
+        }
     }
 
     trace_printk("__per_packet_lb_svc_xlate_4: src=%pI4 dst=%pI4 seq=%u\n",
@@ -229,7 +235,7 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                         ETH_HLEN, l4_off,
                         &key, &tuple, svc,
                         &ct_state_new,
-                        has_l4_header, false,
+                        has_l4_header, 0,
                         &cluster_id, ext_err,
                         ENDPOINT_NETNS_COOKIE);
 #ifdef SERVICE_NO_BACKEND_RESPONSE
@@ -268,7 +274,32 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
                 continue;
             }
 
-            /* build the 6-byte MAC in stack */
+            /* 1) Rewrite IPv4 dst and fix checksums */
+            bpf_skb_store_bytes(ctx,
+                                ETH_HLEN + offsetof(struct iphdr, daddr),
+                                &dbv->ip, sizeof(dbv->ip), 0);
+
+            bpf_l3_csum_replace(ctx,
+                                ETH_HLEN + offsetof(struct iphdr, check),
+                                tuple.daddr, dbv->ip,
+                                sizeof(dbv->ip));
+
+            if (has_l4_header) {
+                if (ip4->protocol == IPPROTO_TCP) {
+                    bpf_l4_csum_replace(ctx,
+                        ETH_HLEN + l4_off + offsetof(struct tcphdr, check),
+                        tuple.daddr, dbv->ip,
+                        sizeof(dbv->ip));
+                } else if (ip4->protocol == IPPROTO_UDP) {
+                    udp = (void *)ip4 + ipv4_hdrlen(ip4);
+                    bpf_l4_csum_replace(ctx,
+                        ETH_HLEN + l4_off + offsetof(struct udphdr, check),
+                        tuple.daddr, dbv->ip,
+                        sizeof(dbv->ip));
+                }
+            }
+
+            /* 2) Rebuild Ethernet header on clone: dst=pod, src=host */
             mac = epinfo->mac;
             new_mac[0] = (mac >>  0) & 0xff;
             new_mac[1] = (mac >>  8) & 0xff;
@@ -277,17 +308,16 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
             new_mac[4] = (mac >> 32) & 0xff;
             new_mac[5] = (mac >> 40) & 0xff;
 
-            /* overwrite Ethernet header on clone: dst=pod, src=host */
-            bpf_skb_store_bytes(ctx, 0,           /* offset 0: dst MAC */
+            bpf_skb_store_bytes(ctx, 0,           /* dst MAC */
                                 new_mac, ETH_ALEN, 0);
-            bpf_skb_store_bytes(ctx, ETH_ALEN,    /* offset 6: src MAC */
+            bpf_skb_store_bytes(ctx, ETH_HLEN,    /* src MAC */
                                 host_mac.addr, ETH_ALEN, 0);
 
             trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
                          sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
                          idx, epinfo->ifindex, &epk.ip4);
 
-            /* inject at ingress so it never re-hits egress (no loop) */
+            /* inject at ingress so it never re-hits egress */
             bpf_clone_redirect(ctx,
                                epinfo->ifindex,
                                BPF_F_INGRESS);
