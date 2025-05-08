@@ -115,32 +115,35 @@ bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
 #ifndef BPF_SKB_STORE_BYTES_HELPER_H
 #define BPF_SKB_STORE_BYTES_HELPER_H
 
-/* id of the helper we want */
-#define BPF_FUNC_skb_store_bytes 38
+/* helper ID for skb_store_bytes */
+#ifndef BPF_FUNC_skb_store_bytes
+# define BPF_FUNC_skb_store_bytes 38
+#endif
 
-/* forward‐declare the intrinsic that the loader will patch into a BPF_CALL,
- * up to six args in registers:
+/* This must *not* be static, so the assembler symbol bpf_call_base actually
+ * gets emitted (and the loader will patch it into a BPF_CALL insn).
  */
-static long __bpf_call_base(long nr, long r1, long r2,
-                            long r3, long r4, long r5, long r6)
+long __bpf_call_base(long nr,
+                     long r1, long r2, long r3,
+                     long r4, long r5, long r6)
     asm("bpf_call_base");
 
-/* Helper: copy 'len' bytes from 'from' into the skb data at 'offset'.
- * flags == 0 or BPF_F_RECOMPUTE_CSUM to fix checksums.
- */
+/* copy 'len' bytes from 'from' into skb data at 'offset', flags=0 or BPF_F_RECOMPUTE_CSUM */
 static __always_inline int
-bpf_skb_store_bytes(void *ctx, __u32 offset,
-                    const void *from, __u32 len, __u64 flags)
+bpf_skb_store_bytes(void *ctx,
+                    __u32 offset,
+                    const void *from,
+                    __u32 len,
+                    __u64 flags)
 {
-    /* pass our five real args in r1–r5, leave r6==0 */
     return (int)__bpf_call_base(
-        BPF_FUNC_skb_store_bytes,
-        (long)ctx,
-        (long)offset,
-        (long)from,
-        (long)len,
-        (long)flags,
-        0L
+        /* nr: */   BPF_FUNC_skb_store_bytes,
+        /* r1: */   (long)ctx,
+        /* r2: */   (long)offset,
+        /* r3: */   (long)from,
+        /* r4: */   (long)len,
+        /* r5: */   (long)flags,
+        /* r6: */    0L
     );
 }
 
