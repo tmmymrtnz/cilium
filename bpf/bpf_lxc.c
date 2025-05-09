@@ -210,17 +210,18 @@ static __always_inline int
 __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
 {
     /* --- original locals --- */
-    struct ipv4_ct_tuple    tuple        = {};
-    struct ct_state         ct_state_new = {};
+    struct ipv4_ct_tuple    tuple         = {};
+    struct ct_state         ct_state_new  = {};
     bool                    has_l4_header;
+    __u8                    l4_proto;
     struct lb4_service     *svc;
-    struct lb4_key          key          = {};
-    __u16                   proxy_port   = 0;
-    __u32                   cluster_id   = 0;
-    int                     l4_off, ret  = 0;
+    struct lb4_key          key           = {};
+    __u16                   proxy_port    = 0;
+    __u32                   cluster_id    = 0;
+    int                     l4_off, ret   = 0;
     void                   *data, *data_end;
     struct ethhdr          *eth;
-    __u32                   seq          = 0;
+    __u32                   seq           = 0;
 
     /* --- new locals for duplication --- */
     struct dup_backends_key    dbk      = {};
@@ -239,9 +240,10 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
 
     /* Extract L4 info */
     has_l4_header = ipv4_has_l4_header(ip4);
-    __u8 l4_proto = ip4->protocol;
+    l4_proto = ip4->protocol;
     if (has_l4_header && l4_proto == IPPROTO_TCP) {
         struct tcphdr *tcph = (void *)ip4 + ipv4_hdrlen(ip4);
+        /* only keep has_l4_header if we can read whole TCP header */
         if ((void *)(tcph + 1) <= data_end) {
             seq = bpf_ntohl(tcph->seq);
         } else {
@@ -328,7 +330,7 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
                                 tuple.daddr, dbv->ip,
                                 sizeof(dbv->ip));
 
-            /* 2) Fix L4 checksum using only our l4_proto local */
+            /* 2) Fix L4 checksum using only l4_proto local */
             if (has_l4_header) {
                 if (l4_proto == IPPROTO_TCP) {
                     bpf_l4_csum_replace(ctx,
