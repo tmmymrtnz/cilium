@@ -269,7 +269,35 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
     lb4_fill_key(&key, &tuple);
     svc = lb4_lookup_service(&key, is_defined(ENABLE_NODEPORT));
     if (svc) {
-        /* … lb4_local, trace, etc … */
+#if defined(ENABLE_L7_LB)
+        if (lb4_svc_is_l7loadbalancer(svc)) {
+            proxy_port = svc->l7_lb_proxy_port;
+            goto skip_service_lookup;
+        }
+#endif
+#if defined(ENABLE_LOCAL_REDIRECT_POLICY) && defined(ENABLE_SOCKET_LB_FULL)
+        if (unlikely(lb4_svc_is_localredirect(svc)))
+            goto skip_service_lookup;
+#endif
+
+        ret = lb4_local(get_ct_map4(&tuple), ctx,
+                        ipv4_is_fragment(ip4),
+                        ETH_HLEN, l4_off,
+                        &key, &tuple, svc,
+                        &ct_state_new,
+                        has_l4_header, 0,
+                        &cluster_id, ext_err,
+                        ENDPOINT_NETNS_COOKIE);
+#ifdef SERVICE_NO_BACKEND_RESPONSE
+        if (ret == DROP_NO_SERVICE)
+            ret = tail_call_internal(ctx, CILIUM_CALL_IPV4_NO_SERVICE, ext_err);
+#endif
+        if (IS_ERR(ret))
+            return ret;
+
+        trace_printk("post_lb4_local: selected backend=%pI4\n",
+                     sizeof("post_lb4_local: selected backend=%pI4\n"),
+                     &tuple.daddr);
 
         /* Clone to each “other” backend */
 #pragma unroll
@@ -280,7 +308,7 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
                 continue;
 
             epk.ip4        = dbv->ip;
-            epk.family     = 1;
+            epk.family     = 1; /* cilium_lxc */
             epk.key        = 0;
             epk.cluster_id = 0;
 
@@ -333,11 +361,18 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
             bpf_skb_store_bytes(ctx, 0, new_mac, ETH_ALEN, 0);
             bpf_skb_store_bytes(ctx, ETH_ALEN, host_mac.addr, ETH_ALEN, 0);
 
-            trace_printk("dup_clone[%d]: cloning to ifindex %d\n",
-                         sizeof("dup_clone[%d]: cloning to ifindex %d\n"),
-                         idx, epinfo->ifindex);
+            trace_printk("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n",
+                         sizeof("dup_clone[%d]: cloning to ifindex %d (ip=%pI4)\n"),
+                         idx, epinfo->ifindex, &epk.ip4);
 
-            bpf_clone_redirect(ctx, epinfo->ifindex, BPF_F_INGRESS);
+            /* inject at ingress so it never re-hits egress */
+            bpf_clone_redirect(ctx,
+                               epinfo->ifindex,
+                               BPF_F_INGRESS);
+
+            trace_printk("dup_clone[%d]: cloned to ifindex %d\n",
+                         sizeof("dup_clone[%d]: cloned to ifindex %d\n"),
+                         idx, epinfo->ifindex);
         }
     }
 
@@ -347,7 +382,6 @@ skip_service_lookup:
 }
 
 #endif /* ENABLE_IPV4 */
-
 
 #ifdef ENABLE_IPV6
 static __always_inline int __per_packet_lb_svc_xlate_6(void *ctx, struct ipv6hdr *ip6,
