@@ -146,6 +146,22 @@ bpf_skb_store_bytes(void *ctx, __u32 offset,
 
 #endif /* BPF_SKB_STORE_BYTES_HELPER_H */
 
+static __always_inline long
+bpf_l3_csum_replace(void *ctx, __u32 offset,
+                    __u64 from, __u64 to, __u64 size)
+{
+    return __builtin_bpf_l3_csum_replace(ctx, offset,
+                                         from, to, size);
+}
+
+static __always_inline long
+bpf_l4_csum_replace(void *ctx, __u32 offset,
+                    __u64 from, __u64 to, __u64 flags)
+{
+    return __builtin_bpf_l4_csum_replace(ctx, offset,
+                                         from, to, flags);
+}
+
 /* Per-packet LB ... */
 #if !defined(ENABLE_SOCKET_LB_FULL) || \
     defined(ENABLE_SOCKET_LB_HOST_ONLY) || \
@@ -184,18 +200,6 @@ static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *
     __u8                       new_mac[ETH_ALEN];
     int                        idx;
     union macaddr              host_mac = THIS_INTERFACE_MAC;
-
-    /* Prototypes for the checksum‐rebuild helpers */
-    static __always_inline int bpf_l3_csum_replace(void *ctx,
-                                                   __u32 offset,
-                                                   __u32 from,
-                                                   __u32 to,
-                                                   __u32 flags);
-    static __always_inline int bpf_l4_csum_replace(void *ctx,
-                                                   __u32 offset,
-                                                   __u32 from,
-                                                   __u32 to,
-                                                   __u32 flags);
 
     /* Pull in L2+IPv4 header */
     if (!revalidate_data(ctx, &data, &data_end, &ip4))
