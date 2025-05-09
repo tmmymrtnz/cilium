@@ -222,9 +222,6 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
     struct ethhdr          *eth;
     __u32                   seq          = 0;
 
-    /* hoist TCP pointer so it stays live for the verifier */
-    struct tcphdr          *tcp          = NULL;
-
     /* --- new locals for duplication --- */
     struct dup_backends_key    dbk      = {};
     struct dup_backends_value *dbv;
@@ -243,14 +240,12 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
     /* Extract TCP sequence number if applicable */
     has_l4_header = ipv4_has_l4_header(ip4);
     if (has_l4_header && ip4->protocol == IPPROTO_TCP) {
-        tcp = (void *)ip4 + ipv4_hdrlen(ip4);
-        /* only keep has_l4_header true if tcp+1 is in-bounds */
-        if ((void *)(tcp + 1) <= data_end) {
-            seq = bpf_ntohl(tcp->seq);
+        struct tcphdr *tcph = (void *)ip4 + ipv4_hdrlen(ip4);
+        /* only keep has_l4_header if we can read whole TCP header */
+        if ((void *)(tcph + 1) <= data_end) {
+            seq = bpf_ntohl(tcph->seq);
         } else {
-            /* TCP header truncated, treat as no L4 header */
             has_l4_header = false;
-            tcp            = NULL;
         }
     }
 
@@ -333,10 +328,9 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
                                 tuple.daddr, dbv->ip,
                                 sizeof(dbv->ip));
 
-            /* 2) Fix L4 checksum only if we still have a valid TCP or UDP header */
+            /* 2) Fix L4 checksum if we still have a valid TCP/UDP header */
             if (has_l4_header) {
                 if (ip4->protocol == IPPROTO_TCP) {
-                    /* tcp pointer was bounds-checked above */
                     bpf_l4_csum_replace(ctx,
                         ETH_HLEN + l4_off + offsetof(struct tcphdr, check),
                         tuple.daddr, dbv->ip,
