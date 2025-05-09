@@ -214,6 +214,7 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
     struct ct_state         ct_state_new  = {};
     bool                    has_l4_header;
     __u8                    l4_proto;
+    struct tcphdr          *tcph;
     struct lb4_service     *svc;
     struct lb4_key          key           = {};
     __u16                   proxy_port    = 0;
@@ -240,9 +241,11 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
 
     /* Extract L4 info */
     has_l4_header = ipv4_has_l4_header(ip4);
-    l4_proto = ip4->protocol;
+    l4_proto      = ip4->protocol;
+    tcph          = NULL;
+
     if (has_l4_header && l4_proto == IPPROTO_TCP) {
-        struct tcphdr *tcph = (void *)ip4 + ipv4_hdrlen(ip4);
+        tcph = (struct tcphdr *)((void *)ip4 + ipv4_hdrlen(ip4));
         /* only keep has_l4_header if we can read whole TCP header */
         if ((void *)(tcph + 1) <= data_end) {
             seq = bpf_ntohl(tcph->seq);
@@ -330,7 +333,7 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
                                 tuple.daddr, dbv->ip,
                                 sizeof(dbv->ip));
 
-            /* 2) Fix L4 checksum using only l4_proto local */
+            /* 2) Fix L4 checksum using l4_proto */
             if (has_l4_header) {
                 if (l4_proto == IPPROTO_TCP) {
                     bpf_l4_csum_replace(ctx,
