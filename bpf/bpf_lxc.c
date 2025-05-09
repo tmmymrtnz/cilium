@@ -5,6 +5,7 @@
 #include <bpf/ctx/skb.h>
 #include <bpf/api.h>
 #include <linux/in.h>
+#include <linux/bpf.h>
 
 #include <ep_config.h>
 #include <node_config.h>
@@ -67,6 +68,131 @@
                  _s, _d);                                                     \
 } while (0)
 
+/* Pack 8 bytes starting at ptr into a __u64 (big-endian) */
+#define PACK_U64(ptr) (                                                       \
+    (__u64)((__u8*)(ptr))[0] << 56 | (__u64)((__u8*)(ptr))[1] << 48 |         \
+    (__u64)((__u8*)(ptr))[2] << 40 | (__u64)((__u8*)(ptr))[3] << 32 |         \
+    (__u64)((__u8*)(ptr))[4] << 24 | (__u64)((__u8*)(ptr))[5] << 16 |         \
+    (__u64)((__u8*)(ptr))[6] <<  8 | (__u64)((__u8*)(ptr))[7]                \
+)
+
+/* Pack 4 bytes starting at ptr into a __u32 (big-endian) */
+#define PACK_U32(ptr) (                                                       \
+    (__u32)((__u8*)(ptr))[0] << 24 | (__u32)((__u8*)(ptr))[1] << 16 |         \
+    (__u32)((__u8*)(ptr))[2] <<  8 | (__u32)((__u8*)(ptr))[3]                \
+)
+
+/* Print bytes [0..15] of `epk` in one go (idx, hi64, lo64) */
+#define PRINT_EPK_RAW_HEAD(idx, epk) do {                                      \
+    __u64 _h0 = PACK_U64(&((epk).ip4));    /* bytes 0–7  */                    \
+    __u64 _h1 = PACK_U64((__u8*)&(epk) + 8); /* bytes 8–15 */                  \
+    trace_printk(                                                              \
+      "epk[%d]: raw_head=%016llx%016llx\n",                                     \
+      sizeof("epk[0]: raw_head=00000000000000000000000000000000\n"),           \
+      (idx), _h0, _h1                                                          \
+    );                                                                         \
+} while (0)
+
+/* Print bytes [16..19] of `epk` (idx, tail32) */
+#define PRINT_EPK_RAW_TAIL(idx, epk) do {                                      \
+    __u32 _t = PACK_U32((__u8*)&(epk) + 16); /* bytes 16–19 */                 \
+    trace_printk(                                                              \
+      "epk[%d]: raw_tail=%08x\n",                                              \
+      sizeof("epk[0]: raw_tail=00000000\n"),                                   \
+      (idx), _t                                                               \
+    );                                                                         \
+} while (0)
+
+static __always_inline int
+bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
+{
+    /* cast the helper number to the correct signature and call it */
+    return (int) ((__u64 (*)(void *, __u32, __u64))
+                   (unsigned long)BPF_FUNC_clone_redirect)
+                  (ctx, ifindex, flags);
+}
+
+#ifndef BPF_SKB_STORE_BYTES_HELPER_H
+#define BPF_SKB_STORE_BYTES_HELPER_H
+
+/* helper number */
+#ifndef BPF_FUNC_skb_store_bytes
+# define BPF_FUNC_skb_store_bytes 38
+#endif
+
+static __always_inline int
+bpf_skb_store_bytes(void *ctx, __u32 offset,
+                    const void *from, __u32 len, __u64 flags)
+{
+    long ret;
+    register long r1 asm("r1") = (long)ctx;
+    register long r2 asm("r2") = (long)offset;
+    register long r3 asm("r3") = (long)from;
+    register long r4 asm("r4") = (long)len;
+    register long r5 asm("r5") = (long)flags;
+    /* 
+     * clang-for-BPF will lower this into exactly:
+     *   r0 = call BPF_FUNC_skb_store_bytes(r1,…,r5)
+     */
+    asm volatile (
+        "call %c[fn]\n"
+        : "=r"(ret)
+        : [fn] "i"(BPF_FUNC_skb_store_bytes),
+          "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
+        : "r0","r1","r2","r3","r4","r5","memory"
+    );
+    return (int)ret;
+}
+
+#endif /* BPF_SKB_STORE_BYTES_HELPER_H */
+
+#ifndef BPF_FUNC_l3_csum_replace
+# define BPF_FUNC_l3_csum_replace 10
+#endif
+#ifndef BPF_FUNC_l4_csum_replace
+# define BPF_FUNC_l4_csum_replace 11
+#endif
+
+static __always_inline long
+bpf_l3_csum_replace(void *ctx, __u32 offset,
+                    __u64 from, __u64 to, __u64 size)
+{
+    long ret;
+    register long r1 asm("r1") = (long)ctx;
+    register long r2 asm("r2") = (long)offset;
+    register long r3 asm("r3") = (long)from;
+    register long r4 asm("r4") = (long)to;
+    register long r5 asm("r5") = (long)size;
+    asm volatile (
+        "call %c[fn]\n"
+        : "=r"(ret)
+        : [fn] "i"(BPF_FUNC_l3_csum_replace),
+          "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
+        : "r0","r1","r2","r3","r4","r5","memory"
+    );
+    return ret;
+}
+
+static __always_inline long
+bpf_l4_csum_replace(void *ctx, __u32 offset,
+                    __u64 from, __u64 to, __u64 flags)
+{
+    long ret;
+    register long r1 asm("r1") = (long)ctx;
+    register long r2 asm("r2") = (long)offset;
+    register long r3 asm("r3") = (long)from;
+    register long r4 asm("r4") = (long)to;
+    register long r5 asm("r5") = (long)flags;
+    asm volatile (
+        "call %c[fn]\n"
+        : "=r"(ret)
+        : [fn] "i"(BPF_FUNC_l4_csum_replace),
+          "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
+        : "r0","r1","r2","r3","r4","r5","memory"
+    );
+    return ret;
+}
+
 /* Per-packet LB ... */
 #if !defined(ENABLE_SOCKET_LB_FULL) || \
     defined(ENABLE_SOCKET_LB_HOST_ONLY) || \
@@ -79,80 +205,89 @@
 #ifdef ENABLE_PER_PACKET_LB
 
 #ifdef ENABLE_IPV4
-static __always_inline int __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4,
-						       __s8 *ext_err)
+static __always_inline int
+__per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
 {
-	struct ipv4_ct_tuple tuple = {};
-	struct ct_state ct_state_new = {};
-	bool has_l4_header;
-	struct lb4_service *svc;
-	struct lb4_key key = {};
-	__u16 proxy_port = 0;
-	__u32 cluster_id = 0;
-	int l4_off;
-	int ret = 0;
-	/* Logging variables */
-	void *data, *data_end;
-	struct ethhdr *eth;
-	__u32 seq = 0;
+    /* 1) locals: all declared up front for C89 */
+    struct ipv4_ct_tuple tuple = {};
+    struct ct_state ct_state_new = {};
+    bool has_l4_header;
+    struct lb4_service *svc;
+    struct lb4_key key = {};
+    __u16 proxy_port = 0;
+    __u32 cluster_id = 0;
+    int l4_off;
+    int ret = 0;
+    void *data;
+    void *data_end;
+    struct ethhdr *eth;
+    __u32 seq = 0;
+    int i;
 
-	/* Validate packet and extract Ethernet header */
-	if (!revalidate_data(ctx, &data, &data_end, &ip4))
-		return DROP_INVALID;
-	eth = data;
+    /* 2) Pull in L2/L3 and validate */
+    if (!revalidate_data(ctx, &data, &data_end, &ip4))
+        return DROP_INVALID;
+    eth = data;
 
-	/* Extract TCP sequence number if applicable */
-	has_l4_header = ipv4_has_l4_header(ip4);
-	if (has_l4_header && ip4->protocol == IPPROTO_TCP) {
-		struct tcphdr *tcp = (struct tcphdr *)((void *)ip4 + ipv4_hdrlen(ip4));
-		if ((void *)(tcp + 1) <= data_end)
-			seq = bpf_ntohl(tcp->seq);
-	}
+    /* 3) (Optional) extract TCP seq for debugging */
+    has_l4_header = ipv4_has_l4_header(ip4);
+    if (has_l4_header && ip4->protocol == IPPROTO_TCP) {
+        struct tcphdr *tcp = (struct tcphdr *)((void *)ip4 + ipv4_hdrlen(ip4));
+        if ((void *)(tcp + 1) <= data_end)
+            seq = bpf_ntohl(tcp->seq);
+    }
+    trace_printk("__per_packet_lb_svc_xlate_4: src=%pI4 dst=%pI4 seq=%u\n",
+                 sizeof("__per_packet_lb_svc_xlate_4: src=%pI4 dst=%pI4 seq=%u\n"),
+                 &ip4->saddr, &ip4->daddr, seq);
+    PRINT_MAC_PAIR("__per_packet_lb_svc_xlate_4: ", eth->h_source, eth->h_dest);
 
-	/* Log entry details */
-	trace_printk("__per_packet_lb_svc_xlate_4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
-		     sizeof("__per_packet_lb_svc_xlate_4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
-		     &ip4->saddr, &ip4->daddr, seq);
-	PRINT_MAC_PAIR("__per_packet_lb_svc_xlate_4: ", eth->h_source, eth->h_dest);
+    /* 4) Extract 4-tuple */
+    ret = lb4_extract_tuple(ctx, ip4, ETH_HLEN, &l4_off, &tuple);
+    if (IS_ERR(ret)) {
+        if (ret == DROP_UNSUPP_SERVICE_PROTO || ret == DROP_UNKNOWN_L4)
+            goto skip_service;
+        else
+            return ret;
+    }
 
-	ret = lb4_extract_tuple(ctx, ip4, ETH_HLEN, &l4_off, &tuple);
-	if (IS_ERR(ret)) {
-		if (ret == DROP_UNSUPP_SERVICE_PROTO || ret == DROP_UNKNOWN_L4)
-			goto skip_service_lookup;
-		else
-			return ret;
-	}
+    /* 5) Lookup the Service in the LB map */
+    lb4_fill_key(&key, &tuple);
+    svc = lb4_lookup_service(&key, is_defined(ENABLE_NODEPORT));
 
-	lb4_fill_key(&key, &tuple);
+    /* 6) If it's UDP, clone once per backend and drop the original */
+    if (svc && tuple.nexthdr == IPPROTO_UDP) {
+        #pragma unroll
+        for (i = 0; i < svc->rev_n_backends; i++) {
+            __u32 be_idx = svc->rev_backends[i];
+            struct lb4_backend be = lb4_lookup_be(ctx, be_idx);
 
-	svc = lb4_lookup_service(&key, is_defined(ENABLE_NODEPORT));
-	if (svc) {
-#if defined(ENABLE_L7_LB)
-		if (lb4_svc_is_l7loadbalancer(svc)) {
-			proxy_port = (__u16)svc->l7_lb_proxy_port;
-			goto skip_service_lookup;
-		}
-#endif /* ENABLE_L7_LB */
-#if defined(ENABLE_LOCAL_REDIRECT_POLICY) && defined(ENABLE_SOCKET_LB_FULL)
-		if (unlikely(lb4_svc_is_localredirect(svc)))
-			goto skip_service_lookup;
-#endif /* ENABLE_LOCAL_REDIRECT_POLICY && ENABLE_SOCKET_LB_FULL */
-		ret = lb4_local(get_ct_map4(&tuple), ctx, ipv4_is_fragment(ip4),
-				ETH_HLEN, l4_off, &key, &tuple, svc, &ct_state_new,
-				has_l4_header, false, &cluster_id, ext_err, ENDPOINT_NETNS_COOKIE);
+            /* skip empty slots */
+            if (be.addr == 0 || be.ifindex == 0)
+                continue;
 
-#ifdef SERVICE_NO_BACKEND_RESPONSE
-		if (ret == DROP_NO_SERVICE)
-			ret = tail_call_internal(ctx, CILIUM_CALL_IPV4_NO_SERVICE,
-						 ext_err);
-#endif
+            /* clone & send into that backend’s veth */
+            bpf_clone_redirect(ctx, be.ifindex, BPF_F_INGRESS);
+        }
+        /* drop the original so it doesn’t also go to backend[0] */
+        return CTX_DROP;
+    }
+    /* 7) Otherwise fall back to normal 1:1 LB (DNAT/SNAT) */
+    else if (svc) {
+        ret = lb4_local(get_ct_map4(&tuple), ctx,
+                        ipv4_is_fragment(ip4),
+                        ETH_HLEN, l4_off,
+                        &key, &tuple, svc,
+                        &ct_state_new, has_l4_header,
+                        false, &cluster_id, ext_err,
+                        ENDPOINT_NETNS_COOKIE);
+        if (IS_ERR(ret))
+            return ret;
+    }
 
-		if (IS_ERR(ret))
-			return ret;
-	}
-skip_service_lookup:
-	lb4_ctx_store_state(ctx, &ct_state_new, proxy_port, cluster_id);
-	return tail_call_internal(ctx, CILIUM_CALL_IPV4_CT_EGRESS, ext_err);
+skip_service:
+    /* 8) Push state into CT and tail-call to CT_EGRESS */
+    lb4_ctx_store_state(ctx, &ct_state_new, proxy_port, cluster_id);
+    return tail_call_internal(ctx, CILIUM_CALL_IPV4_CT_EGRESS, ext_err);
 }
 #endif /* ENABLE_IPV4 */
 
