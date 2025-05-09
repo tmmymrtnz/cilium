@@ -146,20 +146,51 @@ bpf_skb_store_bytes(void *ctx, __u32 offset,
 
 #endif /* BPF_SKB_STORE_BYTES_HELPER_H */
 
+#ifndef BPF_FUNC_l3_csum_replace
+# define BPF_FUNC_l3_csum_replace 10
+#endif
+#ifndef BPF_FUNC_l4_csum_replace
+# define BPF_FUNC_l4_csum_replace 11
+#endif
+
 static __always_inline long
 bpf_l3_csum_replace(void *ctx, __u32 offset,
                     __u64 from, __u64 to, __u64 size)
 {
-    return __builtin_bpf_l3_csum_replace(ctx, offset,
-                                         from, to, size);
+    long ret;
+    register long r1 asm("r1") = (long)ctx;
+    register long r2 asm("r2") = (long)offset;
+    register long r3 asm("r3") = (long)from;
+    register long r4 asm("r4") = (long)to;
+    register long r5 asm("r5") = (long)size;
+    asm volatile (
+        "call %c[fn]\n"
+        : "=r"(ret)
+        : [fn] "i"(BPF_FUNC_l3_csum_replace),
+          "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
+        : "memory"
+    );
+    return ret;
 }
 
 static __always_inline long
 bpf_l4_csum_replace(void *ctx, __u32 offset,
                     __u64 from, __u64 to, __u64 flags)
 {
-    return __builtin_bpf_l4_csum_replace(ctx, offset,
-                                         from, to, flags);
+    long ret;
+    register long r1 asm("r1") = (long)ctx;
+    register long r2 asm("r2") = (long)offset;
+    register long r3 asm("r3") = (long)from;
+    register long r4 asm("r4") = (long)to;
+    register long r5 asm("r5") = (long)flags;
+    asm volatile (
+        "call %c[fn]\n"
+        : "=r"(ret)
+        : [fn] "i"(BPF_FUNC_l4_csum_replace),
+          "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
+        : "memory"
+    );
+    return ret;
 }
 
 /* Per-packet LB ... */
