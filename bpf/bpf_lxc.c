@@ -237,11 +237,11 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
         return DROP_INVALID;
     eth = data;
 
-    /* Extract TCP sequence number if applicable */
+    /* Extract L4 info */
     has_l4_header = ipv4_has_l4_header(ip4);
-    if (has_l4_header && ip4->protocol == IPPROTO_TCP) {
+    __u8 l4_proto = ip4->protocol;
+    if (has_l4_header && l4_proto == IPPROTO_TCP) {
         struct tcphdr *tcph = (void *)ip4 + ipv4_hdrlen(ip4);
-        /* only keep has_l4_header if we can read whole TCP header */
         if ((void *)(tcph + 1) <= data_end) {
             seq = bpf_ntohl(tcph->seq);
         } else {
@@ -328,14 +328,14 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
                                 tuple.daddr, dbv->ip,
                                 sizeof(dbv->ip));
 
-            /* 2) Fix L4 checksum if we still have a valid TCP/UDP header */
+            /* 2) Fix L4 checksum using only our l4_proto local */
             if (has_l4_header) {
-                if (ip4->protocol == IPPROTO_TCP) {
+                if (l4_proto == IPPROTO_TCP) {
                     bpf_l4_csum_replace(ctx,
                         ETH_HLEN + l4_off + offsetof(struct tcphdr, check),
                         tuple.daddr, dbv->ip,
                         sizeof(dbv->ip));
-                } else if (ip4->protocol == IPPROTO_UDP) {
+                } else if (l4_proto == IPPROTO_UDP) {
                     bpf_l4_csum_replace(ctx,
                         ETH_HLEN + l4_off + offsetof(struct udphdr, check),
                         tuple.daddr, dbv->ip,
