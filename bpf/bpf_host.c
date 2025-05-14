@@ -951,7 +951,7 @@ handle_ipv4(struct __ctx_buff *ctx,
     struct ethhdr    *eth;
     struct iphdr     *ip4;
     struct tcphdr    *tcp;
-    int               ret;
+    int               ret __maybe_unused;
 #ifdef ENABLE_NODEPORT
     /* for NodePort + UDP duplication */
     bool              is_dsr;
