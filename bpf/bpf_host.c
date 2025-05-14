@@ -955,6 +955,10 @@ handle_ipv4(struct __ctx_buff *ctx,
     struct iphdr           *ip4;
     struct tcphdr          *tcp;
     int                     ret __maybe_unused;
+
+    /* for unconditional UDP fan-out */
+    union macaddr           host_mac = THIS_INTERFACE_MAC;
+
 #ifdef ENABLE_NODEPORT
     bool                    is_dsr;
 #endif
@@ -962,11 +966,11 @@ handle_ipv4(struct __ctx_buff *ctx,
     int                     l4_off;
     struct dup_backends_key    dbk;
     struct dup_backends_value *dbv;
-    union macaddr           host_mac;
+
 #ifdef ENABLE_HOST_FIREWALL
     struct ct_buffer4       ct_buffer;
-    bool                    need_hostfw;
-    bool                    is_host_id;
+    bool                    need_hostfw = false;
+    bool                    is_host_id  = false;
 #endif
 
     /* 1) Parse L2/L3 headers */
@@ -1002,12 +1006,12 @@ handle_ipv4(struct __ctx_buff *ctx,
 #ifdef ENABLE_NODEPORT
     if (!ctx_skip_nodeport(ctx)) {
         ret = nodeport_lb4(ctx,
-                            ip4,
-                            ETH_HLEN,
-                            secctx,
-                            punt_to_stack,
-                            ext_err,
-                            &is_dsr);
+                           ip4,
+                           ETH_HLEN,
+                           secctx,
+                           punt_to_stack,
+                           ext_err,
+                           &is_dsr);
         if (ret < 0 || ret == TC_ACT_REDIRECT || *punt_to_stack)
             return ret;
     }
@@ -1015,11 +1019,10 @@ handle_ipv4(struct __ctx_buff *ctx,
 
     /* 4) Unconditional UDP fan-out */
     if (ip4->protocol == IPPROTO_UDP) {
-        l4_off   = ETH_HLEN + ipv4_hdrlen(ip4);
-        host_mac = THIS_INTERFACE_MAC;
+        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
         for (idx = 0; idx < MAX_DUP_BACKENDS; idx++) {
             dbk.idx = (__u32)idx;
-            dbv      = map_lookup_elem(&dup_backends, &dbk);
+            dbv = map_lookup_elem(&dup_backends, &dbk);
             if (dbv == NULL || dbv->ip == 0 || dbv->ifindex == 0)
                 continue;
 
@@ -1031,7 +1034,7 @@ handle_ipv4(struct __ctx_buff *ctx,
                                 0);
             bpf_l3_csum_replace(ctx,
                                 ETH_HLEN + offsetof(struct iphdr, check),
-                                0,      /* old val ignored */
+                                0,
                                 dbv->ip,
                                 sizeof(dbv->ip));
 
@@ -1070,7 +1073,7 @@ handle_ipv4(struct __ctx_buff *ctx,
             if (unlikely(ct_buffer.ret < 0))
                 return ct_buffer.ret;
             need_hostfw = true;
-            is_host_id  = secctx == HOST_ID;
+            is_host_id  = (secctx == HOST_ID);
         }
     } else if (!ctx_skip_host_fw(ctx)) {
         if (!revalidate_data(ctx, &data, &data_end, &ip4))
@@ -1084,11 +1087,10 @@ handle_ipv4(struct __ctx_buff *ctx,
     if (need_hostfw) {
         __u32 zero = 0;
         map_update_elem(&CT_TAIL_CALL_BUFFER4, &zero, &ct_buffer, 0);
+        ctx_store_meta(ctx, CB_FROM_HOST,
+                      (FROM_HOST_FLAG_NEED_HOSTFW |
+                       (is_host_id ? FROM_HOST_FLAG_HOST_ID : 0)));
     }
-
-    ctx_store_meta(ctx, CB_FROM_HOST,
-                  (need_hostfw ? FROM_HOST_FLAG_NEED_HOSTFW : 0) |
-                  (is_host_id ? FROM_HOST_FLAG_HOST_ID : 0));
 #endif
 
     trace_printk("handle_ipv4: returning CTX_ACT_OK\n",
