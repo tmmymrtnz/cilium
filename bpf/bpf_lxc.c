@@ -259,7 +259,7 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
         #pragma unroll
         for (idx = 0; idx < MAX_DUP_BACKENDS; idx++) {
             dbk.idx = (__u32)idx;
-            dbv = bpf_map_lookup_elem(&dup_backends, &dbk);
+            dbv = map_lookup_elem(&dup_backends, &dbk);
             if (!dbv || dbv->ip == 0 || dbv->ifindex == 0)
                 continue;
 
