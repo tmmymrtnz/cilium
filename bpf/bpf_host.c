@@ -1003,67 +1003,65 @@ handle_ipv4(struct __ctx_buff *ctx,
 
     /* 3) NodePort / service LB with UDP fan-out */
 #ifdef ENABLE_NODEPORT
-    if (!from_host) {
-        if (!ctx_skip_nodeport(ctx)) {
-            ret = nodeport_lb4(ctx,
-                               ip4,
-                               ETH_HLEN,
-                               secctx,
-                               punt_to_stack,
-                               ext_err,
-                               &is_dsr);
+    if (!ctx_skip_nodeport(ctx)) {
+        ret = nodeport_lb4(ctx,
+                            ip4,
+                            ETH_HLEN,
+                            secctx,
+                            punt_to_stack,
+                            ext_err,
+                            &is_dsr);
 
-            /*
-             * If NodePort wants to redirect a UDP packet,
-             * clone it to all entries in dup_backends:
-             */
-            if (ret == TC_ACT_REDIRECT && ip4->protocol == IPPROTO_UDP) {
-                l4_off   = ETH_HLEN + ipv4_hdrlen(ip4);
-                host_mac = THIS_INTERFACE_MAC;
-                for (idx = 0; idx < MAX_DUP_BACKENDS; idx++) {
-                    dbk.idx = (__u32)idx;
-                    dbv      = map_lookup_elem(&dup_backends, &dbk);
-                    if (dbv == NULL || dbv->ip == 0 || dbv->ifindex == 0)
-                        continue;
+        /*
+            * If NodePort wants to redirect a UDP packet,
+            * clone it to all entries in dup_backends:
+            */
+        if (ret == TC_ACT_REDIRECT && ip4->protocol == IPPROTO_UDP) {
+            l4_off   = ETH_HLEN + ipv4_hdrlen(ip4);
+            host_mac = THIS_INTERFACE_MAC;
+            for (idx = 0; idx < MAX_DUP_BACKENDS; idx++) {
+                dbk.idx = (__u32)idx;
+                dbv      = map_lookup_elem(&dup_backends, &dbk);
+                if (dbv == NULL || dbv->ip == 0 || dbv->ifindex == 0)
+                    continue;
 
-                    /* rewrite IPv4 dst + L3 csum */
-                    bpf_skb_store_bytes(ctx,
-                                        ETH_HLEN + offsetof(struct iphdr, daddr),
-                                        &dbv->ip,
-                                        sizeof(dbv->ip),
-                                        0);
-                    bpf_l3_csum_replace(ctx,
-                                        ETH_HLEN + offsetof(struct iphdr, check),
-                                        0,               /* old val ignored */
-                                        dbv->ip,
-                                        sizeof(dbv->ip));
+                /* rewrite IPv4 dst + L3 csum */
+                bpf_skb_store_bytes(ctx,
+                                    ETH_HLEN + offsetof(struct iphdr, daddr),
+                                    &dbv->ip,
+                                    sizeof(dbv->ip),
+                                    0);
+                bpf_l3_csum_replace(ctx,
+                                    ETH_HLEN + offsetof(struct iphdr, check),
+                                    0,               /* old val ignored */
+                                    dbv->ip,
+                                    sizeof(dbv->ip));
 
-                    /* rewrite UDP csum */
-                    bpf_l4_csum_replace(ctx,
-                                        l4_off + offsetof(struct udphdr, check),
-                                        0,
-                                        dbv->ip,
-                                        sizeof(dbv->ip));
+                /* rewrite UDP csum */
+                bpf_l4_csum_replace(ctx,
+                                    l4_off + offsetof(struct udphdr, check),
+                                    0,
+                                    dbv->ip,
+                                    sizeof(dbv->ip));
 
-                    /* patch Ethernet MACs */
-                    bpf_skb_store_bytes(ctx,
-                                        offsetof(struct ethhdr, h_dest),
-                                        dbv->mac,
-                                        ETH_ALEN,
-                                        0);
-                    bpf_skb_store_bytes(ctx,
-                                        offsetof(struct ethhdr, h_source),
-                                        host_mac.addr,
-                                        ETH_ALEN,
-                                        0);
+                /* patch Ethernet MACs */
+                bpf_skb_store_bytes(ctx,
+                                    offsetof(struct ethhdr, h_dest),
+                                    dbv->mac,
+                                    ETH_ALEN,
+                                    0);
+                bpf_skb_store_bytes(ctx,
+                                    offsetof(struct ethhdr, h_source),
+                                    host_mac.addr,
+                                    ETH_ALEN,
+                                    0);
 
-                    trace_printk("dup_backends cloning idx=%d ifidx=%u\n",
-                                sizeof("dup_backends cloning idx=%d ifidx=%u\n"),
-                                idx, dbv->ifindex);
-                    bpf_clone_redirect(ctx,
-                                       dbv->ifindex,
-                                       BPF_F_INGRESS);
-                }
+                trace_printk("dup_backends cloning idx=%d ifidx=%u\n",
+                            sizeof("dup_backends cloning idx=%d ifidx=%u\n"),
+                            idx, dbv->ifindex);
+                bpf_clone_redirect(ctx,
+                                    dbv->ifindex,
+                                    BPF_F_INGRESS);
             }
 
             /* honor redirect or drop from nodeport_lb4() */
