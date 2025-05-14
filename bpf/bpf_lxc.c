@@ -1542,6 +1542,10 @@ static __always_inline int __tail_handle_ipv4(struct __ctx_buff *ctx,
             seq = bpf_ntohl(tcp->seq);
     }
 
+	trace_printk("__tail_handle_ipv4: protocol=%u\n",
+		     sizeof("__tail_handle_ipv4: protocol=%u\n"),
+		     ip4->protocol);
+
     trace_printk("__tail_handle_ipv4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n",
                  sizeof("__tail_handle_ipv4: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
                  &ip4->saddr, &ip4->daddr, seq);
