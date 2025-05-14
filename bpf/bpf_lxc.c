@@ -261,11 +261,20 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
             dbk.idx = (__u32)idx;
             dbv = map_lookup_elem(&dup_backends, &dbk);
 
-			if (dbv) {
-                trace_printk("dup_backends lookup idx=%d → ip=%pI4 ifindex=%d\n",
-                             idx, &dbv->ip, dbv->ifindex);
+            if (dbv) {
+                trace_printk(
+                  "dup_backends lookup idx=%d ip=%pI4 ifidx=%u\n",
+                  sizeof("dup_backends lookup idx=%d ip=%pI4 ifidx=%u\n"),
+                  idx,
+                  &dbv->ip,
+                  dbv->ifindex
+                );
             } else {
-                trace_printk("dup_backends lookup idx=%d → <nil>\n", idx);
+                trace_printk(
+                  "dup_backends lookup idx=%d → <nil>\n",
+                  sizeof("dup_backends lookup idx=%d → <nil>\n"),
+                  idx
+                );
             }
 
             if (!dbv || dbv->ip == 0 || dbv->ifindex == 0)
@@ -292,8 +301,12 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
                                 offsetof(struct ethhdr, h_source),
                                 host_mac.addr, ETH_ALEN, 0);
 
-			trace_printk("dup_backends cloning idx=%d → ifindex=%d\n",
-            idx, dbv->ifindex);
+            trace_printk(
+              "dup_backends cloning idx=%d ifidx=%u\n",
+              sizeof("dup_backends cloning idx=%d ifidx=%u\n"),
+              idx,
+              dbv->ifindex
+            );
             /* 4d) Clone into pod veth on ingress */
             bpf_clone_redirect(ctx, dbv->ifindex, BPF_F_INGRESS);
         }
