@@ -1550,31 +1550,36 @@ static __always_inline int __tail_handle_ipv4(struct __ctx_buff *ctx,
     PRINT_MAC_PAIR("__tail_handle_ipv4: ", smac, dmac);
 
 #ifndef ENABLE_IPV4_FRAGMENTS
-	if (ipv4_is_fragment(ip4))
-		return DROP_FRAG_NOSUPPORT;
+    if (ipv4_is_fragment(ip4))
+        return DROP_FRAG_NOSUPPORT;
 #endif
 
-	if (unlikely(!is_valid_lxc_src_ipv4(ip4)))
-		return DROP_INVALID_SIP;
+    if (unlikely(!is_valid_lxc_src_ipv4(ip4)))
+        return DROP_INVALID_SIP;
 
 #ifdef ENABLE_MULTICAST
-	if (mcast_ipv4_is_igmp(ip4)) {
-		return mcast_ipv4_handle_igmp(ctx, ip4, data, data_end);
-	}
+    if (mcast_ipv4_is_igmp(ip4)) {
+        return mcast_ipv4_handle_igmp(ctx, ip4, data, data_end);
+    }
 
-	if (IN_MULTICAST(bpf_ntohl(ip4->daddr))) {
-		if (mcast_lookup_subscriber_map(&ip4->daddr))
-			return tail_call_internal(ctx,
-						  CILIUM_CALL_MULTICAST_EP_DELIVERY,
-						  ext_err);
-	}
+    if (IN_MULTICAST(bpf_ntohl(ip4->daddr))) {
+        if (mcast_lookup_subscriber_map(&ip4->daddr))
+            return tail_call_internal(ctx,
+                                      CILIUM_CALL_MULTICAST_EP_DELIVERY,
+                                      ext_err);
+    }
 #endif /* ENABLE_MULTICAST */
 
-#ifdef ENABLE_PER_PACKET_LB
-	return __per_packet_lb_svc_xlate_4(ctx, ip4, ext_err);
-#else
-	return tail_ipv4_ct_egress(ctx);
-#endif /* ENABLE_PER_PACKET_LB */
+    /*
+     * Always send UDP through the per-packet-LB path,
+     * even if ENABLE_PER_PACKET_LB isn’t defined.
+     */
+    if (ip4->protocol == IPPROTO_UDP) {
+        return __per_packet_lb_svc_xlate_4(ctx, ip4, ext_err);
+    }
+
+    /* TCP and everything else: fallback to normal CT-based egress */
+    return tail_ipv4_ct_egress(ctx);
 }
 
 __section_tail(CILIUM_MAP_CALLS, CILIUM_CALL_IPV4_FROM_LXC)
