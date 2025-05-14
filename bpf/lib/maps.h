@@ -281,10 +281,10 @@ struct dup_backends_key {
 };
 
 struct dup_backends_value {
-    __u32 ip;          /* in network byte order */
-	__u32 ifindex;     /* interface index */
-    __u8  mac[ETH_ALEN];
-    __u8  pad[2];      /* explicit pad to 12 bytes */
+    __u32 ip;                 /* network-order IPv4 */
+    __u8  mac[ETH_ALEN];      /* destination MAC */
+    __u8  pad[2];             /* pad so next field is at offset 12 */
+    __u32 ifindex;            /* host veth-ifindex at offset 12 */
 };
 
 struct {

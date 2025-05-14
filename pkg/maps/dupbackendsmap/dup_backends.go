@@ -61,28 +61,27 @@ func (k *DupBackendsKey) New() bpf.MapKey { return &DupBackendsKey{} }
 func (k *DupBackendsKey) String() string  { return fmt.Sprintf("%d", k.Idx) }
 
 // DupBackendsValue must match struct dup_backends_value in your BPF C code
-// (now with an Ifindex field, then MAC + padding)
+// (now with MAC + padding before Ifindex)
 type DupBackendsValue struct {
-    IP      uint32  `align:"ip"`       // IPv4 in network byte order
-    Ifindex uint32  `align:"ifindex"`  // which veth to clone into
-    MAC     [6]byte `align:"mac"`      // destination MAC
-    _       [2]byte               // explicit padding (total sizeof == 16+2 == 20)
+    IP      uint32  `align:"ip"`      // IPv4 in network byte order
+    MAC     [6]byte `align:"mac"`     // destination MAC
+    _       [2]byte                // explicit padding so Ifindex lands at offset 12
+    Ifindex uint32  `align:"ifindex"` // which veth to clone into
 }
 
 func (v *DupBackendsValue) New() bpf.MapValue { return &DupBackendsValue{} }
 func (v *DupBackendsValue) String() string {
     ip := make(net.IP, 4)
     binary.BigEndian.PutUint32(ip, v.IP)
-    return fmt.Sprintf("ip=%s ifindex=%d mac=%02x:%02x:%02x:%02x:%02x:%02x",
+    return fmt.Sprintf("ip=%s mac=%02x:%02x:%02x:%02x:%02x:%02x ifindex=%d",
         ip,
-        v.Ifindex,
         v.MAC[0], v.MAC[1], v.MAC[2],
         v.MAC[3], v.MAC[4], v.MAC[5],
+        v.Ifindex,
     )
 }
 
 // IterateCallback is called for every key/value in the map.
-// The DupBackendsValue you get now has an Ifindex field you can inspect.
 type IterateCallback func(key *DupBackendsKey, val *DupBackendsValue)
 
 // AddBackend inserts or updates one backend at index [0,MaxBackends).
@@ -105,8 +104,8 @@ func (m dupBackendsMap) AddBackend(idx int, ip net.IP, mac net.HardwareAddr, ifi
     key := &DupBackendsKey{Idx: uint32(idx)}
     value := &DupBackendsValue{
         IP:      binary.BigEndian.Uint32(ip4),
-        Ifindex: uint32(ifindex),
         MAC:     [6]byte{mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]},
+        Ifindex: uint32(ifindex),
     }
 
     if err := m.Map.Update(key, value); err != nil {
