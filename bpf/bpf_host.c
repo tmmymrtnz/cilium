@@ -104,6 +104,7 @@
     );                                                                         \
 } while (0)
 
+__attribute__((unused))
 static __always_inline int
 bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
 {
@@ -121,6 +122,7 @@ bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
 # define BPF_FUNC_skb_store_bytes 38
 #endif
 
+__attribute__((unused))
 static __always_inline int
 bpf_skb_store_bytes(void *ctx, __u32 offset,
                     const void *from, __u32 len, __u64 flags)
@@ -154,6 +156,7 @@ bpf_skb_store_bytes(void *ctx, __u32 offset,
 # define BPF_FUNC_l4_csum_replace 11
 #endif
 
+__attribute__((unused))
 static __always_inline long
 bpf_l3_csum_replace(void *ctx, __u32 offset,
                     __u64 from, __u64 to, __u64 size)
@@ -174,6 +177,7 @@ bpf_l3_csum_replace(void *ctx, __u32 offset,
     return ret;
 }
 
+__attribute__((unused))
 static __always_inline long
 bpf_l4_csum_replace(void *ctx, __u32 offset,
                     __u64 from, __u64 to, __u64 flags)
