@@ -958,6 +958,9 @@ handle_ipv4(struct __ctx_buff *ctx,
 
     /* for unconditional UDP fan-out */
     union macaddr           host_mac = THIS_INTERFACE_MAC;
+    __u32 old_daddr;
+    __u32 new_daddr;
+
 
 #ifdef ENABLE_NODEPORT
     bool                    is_dsr;
@@ -1019,31 +1022,37 @@ handle_ipv4(struct __ctx_buff *ctx,
 
     /* 4) Unconditional UDP fan-out */
     if (ip4->protocol == IPPROTO_UDP) {
-        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
+        /* stash original dst and interface MAC */
+        old_daddr = ip4->daddr;
+        host_mac  = THIS_INTERFACE_MAC;
+        l4_off    = ETH_HLEN + ipv4_hdrlen(ip4);
+
         for (idx = 0; idx < MAX_DUP_BACKENDS; idx++) {
             dbk.idx = (__u32)idx;
-            dbv = map_lookup_elem(&dup_backends, &dbk);
+            dbv      = map_lookup_elem(&dup_backends, &dbk);
             if (dbv == NULL || dbv->ip == 0 || dbv->ifindex == 0)
                 continue;
 
-            /* rewrite IPv4 dst + L3 checksum */
+            new_daddr = dbv->ip;
+
+            /* rewrite IPv4 dst & adjust IPv4 checksum */
             bpf_skb_store_bytes(ctx,
                                 ETH_HLEN + offsetof(struct iphdr, daddr),
-                                &dbv->ip,
-                                sizeof(dbv->ip),
+                                &new_daddr,
+                                sizeof(new_daddr),
                                 0);
             bpf_l3_csum_replace(ctx,
                                 ETH_HLEN + offsetof(struct iphdr, check),
-                                0,
-                                dbv->ip,
-                                sizeof(dbv->ip));
+                                old_daddr,
+                                new_daddr,
+                                sizeof(new_daddr));
 
-            /* rewrite UDP checksum */
+            /* rewrite UDP checksum (pseudo-header delta) */
             bpf_l4_csum_replace(ctx,
-                                l4_off + offsetof(struct udphdr, check),
-                                0,
-                                dbv->ip,
-                                sizeof(dbv->ip));
+                                l4_off   + offsetof(struct udphdr, check),
+                                old_daddr,
+                                new_daddr,
+                                sizeof(new_daddr));
 
             /* patch Ethernet MACs */
             bpf_skb_store_bytes(ctx,
@@ -1060,6 +1069,13 @@ handle_ipv4(struct __ctx_buff *ctx,
             trace_printk("dup_backends cloning idx=%d ifidx=%u\n",
                         sizeof("dup_backends cloning idx=%d ifidx=%u\n"),
                         idx, dbv->ifindex);
+            trace_printk("dup_backends cloning old_daddr=%pI4 new_daddr=%pI4\n",
+                        sizeof("dup_backends cloning old_daddr=%pI4 new_daddr=%pI4\n"),
+                        &old_daddr, &new_daddr);
+            PRINT_MAC_PAIR("dup_backends cloning: ", dbv->mac, host_mac.addr);
+            trace_printk("dup_backends cloning: src_ip=%pI4 dst_ip=%pI4\n",
+                        sizeof("dup_backends cloning: src_ip=%pI4 dst_ip=%pI4\n"),
+                        &ip4->saddr, &ip4->daddr);
             bpf_clone_redirect(ctx,
                               dbv->ifindex,
                               BPF_F_INGRESS);
