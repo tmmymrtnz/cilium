@@ -265,24 +265,24 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
 
             /* 4a) Rewrite IPv4 dst + L3 csum */
             bpf_skb_store_bytes(ctx,
-                ETH_HLEN + offsetof(struct iphdr, daddr),
-                &dbv->ip, sizeof(dbv->ip), 0);
+                                ETH_HLEN + offsetof(struct iphdr, daddr),
+                                &dbv->ip, sizeof(dbv->ip), 0);
             bpf_l3_csum_replace(ctx,
-                ETH_HLEN + offsetof(struct iphdr, check),
-                tuple.daddr, dbv->ip, sizeof(dbv->ip));
+                                ETH_HLEN + offsetof(struct iphdr, check),
+                                tuple.daddr, dbv->ip, sizeof(dbv->ip));
 
             /* 4b) Rewrite UDP csum */
             bpf_l4_csum_replace(ctx,
-                ETH_HLEN + l4_off + offsetof(struct udphdr, check),
-                tuple.daddr, dbv->ip, sizeof(dbv->ip));
+                                ETH_HLEN + l4_off + offsetof(struct udphdr, check),
+                                tuple.daddr, dbv->ip, sizeof(dbv->ip));
 
             /* 4c) Patch Ethernet DST MAC, restore SMAC */
             bpf_skb_store_bytes(ctx,
-                offsetof(struct ethhdr, h_dest),
-                dbv->mac, ETH_ALEN, 0);
+                                offsetof(struct ethhdr, h_dest),
+                                dbv->mac, ETH_ALEN, 0);
             bpf_skb_store_bytes(ctx,
-                offsetof(struct ethhdr, h_source),
-                host_mac.addr, ETH_ALEN, 0);
+                                offsetof(struct ethhdr, h_source),
+                                host_mac.addr, ETH_ALEN, 0);
 
             /* 4d) Clone into pod veth on ingress */
             bpf_clone_redirect(ctx, dbv->ifindex, BPF_F_INGRESS);

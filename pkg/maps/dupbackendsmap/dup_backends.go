@@ -61,27 +61,33 @@ func (k *DupBackendsKey) New() bpf.MapKey { return &DupBackendsKey{} }
 func (k *DupBackendsKey) String() string  { return fmt.Sprintf("%d", k.Idx) }
 
 // DupBackendsValue must match struct dup_backends_value in your BPF C code
+// (now with an Ifindex field, then MAC + padding)
 type DupBackendsValue struct {
-    IP   uint32  `align:"ip"`  // IPv4 in network byte order
-    MAC  [6]byte `align:"mac"` // destination MAC
-    _    [2]byte             // explicit padding so sizeof==12
+    IP      uint32  `align:"ip"`       // IPv4 in network byte order
+    Ifindex uint32  `align:"ifindex"`  // which veth to clone into
+    MAC     [6]byte `align:"mac"`      // destination MAC
+    _       [2]byte               // explicit padding (total sizeof == 16+2 == 20)
 }
 
 func (v *DupBackendsValue) New() bpf.MapValue { return &DupBackendsValue{} }
 func (v *DupBackendsValue) String() string {
     ip := make(net.IP, 4)
     binary.BigEndian.PutUint32(ip, v.IP)
-    return fmt.Sprintf("ip=%s mac=%02x:%02x:%02x:%02x:%02x:%02x",
-        ip, v.MAC[0], v.MAC[1], v.MAC[2],
+    return fmt.Sprintf("ip=%s ifindex=%d mac=%02x:%02x:%02x:%02x:%02x:%02x",
+        ip,
+        v.Ifindex,
+        v.MAC[0], v.MAC[1], v.MAC[2],
         v.MAC[3], v.MAC[4], v.MAC[5],
     )
 }
 
 // IterateCallback is called for every key/value in the map.
+// The DupBackendsValue you get now has an Ifindex field you can inspect.
 type IterateCallback func(key *DupBackendsKey, val *DupBackendsValue)
 
 // AddBackend inserts or updates one backend at index [0,MaxBackends).
-func (m dupBackendsMap) AddBackend(idx int, ip net.IP, mac net.HardwareAddr) error {
+// Now takes an ifindex so we know where to clone packets.
+func (m dupBackendsMap) AddBackend(idx int, ip net.IP, mac net.HardwareAddr, ifindex int) error {
     if idx < 0 || idx >= MaxBackends {
         return fmt.Errorf("index %d out of range [0,%d)", idx, MaxBackends)
     }
@@ -92,19 +98,26 @@ func (m dupBackendsMap) AddBackend(idx int, ip net.IP, mac net.HardwareAddr) err
     if len(mac) != 6 {
         return fmt.Errorf("invalid MAC address: %s", mac)
     }
+    if ifindex <= 0 {
+        return fmt.Errorf("invalid ifindex: %d", ifindex)
+    }
 
     key := &DupBackendsKey{Idx: uint32(idx)}
     value := &DupBackendsValue{
-        IP:  binary.BigEndian.Uint32(ip4),
-        MAC: [6]byte{mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]},
+        IP:      binary.BigEndian.Uint32(ip4),
+        Ifindex: uint32(ifindex),
+        MAC:     [6]byte{mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]},
     }
 
     if err := m.Map.Update(key, value); err != nil {
-        return fmt.Errorf("failed to upsert backend[%d]=%s/%s: %w",
-            idx, ip4, mac, err)
+        return fmt.Errorf("failed to upsert backend[%d]=%s/%s idx=%d: %w",
+            idx, ip4, mac, ifindex, err)
     }
     log.WithFields(logrus.Fields{
-        "idx": idx, "ip": ip4, "mac": mac,
+        "idx":     idx,
+        "ip":      ip4,
+        "mac":     mac,
+        "ifindex": ifindex,
     }).Info("Upserted dup_backends entry")
     return nil
 }
@@ -122,21 +135,22 @@ func (m dupBackendsMap) DeleteBackend(idx int) error {
     return nil
 }
 
-// LookupBackend retrieves the IP/MAC at index [0,MaxBackends).
-func (m dupBackendsMap) LookupBackend(idx int) (*net.IP, *net.HardwareAddr, error) {
+// LookupBackend retrieves the IP/MAC/ifindex at index [0,MaxBackends).
+func (m dupBackendsMap) LookupBackend(idx int) (*net.IP, *net.HardwareAddr, uint32, error) {
     if idx < 0 || idx >= MaxBackends {
-        return nil, nil, fmt.Errorf("index %d out of range [0,%d)", idx, MaxBackends)
+        return nil, nil, 0, fmt.Errorf("index %d out of range [0,%d)", idx, MaxBackends)
     }
     key := &DupBackendsKey{Idx: uint32(idx)}
     raw, err := m.Map.Lookup(key)
     if err != nil {
-        return nil, nil, err
+        return nil, nil, 0, err
     }
     val := raw.(*DupBackendsValue)
+
     ip := make(net.IP, 4)
     binary.BigEndian.PutUint32(ip, val.IP)
     mac := net.HardwareAddr(val.MAC[:])
-    return &ip, &mac, nil
+    return &ip, &mac, val.Ifindex, nil
 }
 
 // IterateWithCallback walks through all entries in dup_backends.

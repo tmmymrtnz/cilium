@@ -282,6 +282,7 @@ struct dup_backends_key {
 
 struct dup_backends_value {
     __u32 ip;          /* in network byte order */
+	__u32 ifindex;     /* interface index */
     __u8  mac[ETH_ALEN];
     __u8  pad[2];      /* explicit pad to 12 bytes */
 };
