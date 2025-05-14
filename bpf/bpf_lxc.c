@@ -208,28 +208,31 @@ bpf_l4_csum_replace(void *ctx, __u32 offset,
 static __always_inline int
 __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
 {
-    /* 1) locals: all declared up front for C89 */
-    struct ipv4_ct_tuple tuple = {};
-    struct ct_state ct_state_new = {};
-    bool has_l4_header;
-    struct lb4_service *svc;
-    struct lb4_key key = {};
-    __u16 proxy_port = 0;
-    __u32 cluster_id = 0;
-    int l4_off;
-    int ret = 0;
-    void *data;
-    void *data_end;
-    struct ethhdr *eth;
-    __u32 seq = 0;
-    int i;
+    /* Original locals (all declared up‐front for C89) */
+    struct ipv4_ct_tuple    tuple         = {};
+    struct ct_state         ct_state_new  = {};
+    bool                    has_l4_header;
+    struct lb4_service     *svc;
+    struct lb4_key          key           = {};
+    __u16                   proxy_port    = 0;
+    __u32                   cluster_id    = 0;
+    int                     l4_off, ret   = 0;
+    void                   *data, *data_end;
+    struct ethhdr          *eth;
+    __u32                   seq           = 0;
 
-    /* 2) Pull in L2/L3 and validate */
+    /* Duplication locals */
+    struct dup_backends_key     dbk;
+    struct dup_backends_value  *dbv;
+    union macaddr               host_mac     = THIS_INTERFACE_MAC;
+    int                         idx;
+
+    /* 1) Pull in L2+L3 */
     if (!revalidate_data(ctx, &data, &data_end, &ip4))
         return DROP_INVALID;
     eth = data;
 
-    /* 3) (Optional) extract TCP seq for debugging */
+    /* 2) Optional TCP‐seq logging */
     has_l4_header = ipv4_has_l4_header(ip4);
     if (has_l4_header && ip4->protocol == IPPROTO_TCP) {
         struct tcphdr *tcp = (struct tcphdr *)((void *)ip4 + ipv4_hdrlen(ip4));
@@ -241,37 +244,53 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
                  &ip4->saddr, &ip4->daddr, seq);
     PRINT_MAC_PAIR("__per_packet_lb_svc_xlate_4: ", eth->h_source, eth->h_dest);
 
-    /* 4) Extract 4-tuple */
+    /* 3) Extract tuple + lookup Service */
     ret = lb4_extract_tuple(ctx, ip4, ETH_HLEN, &l4_off, &tuple);
     if (IS_ERR(ret)) {
         if (ret == DROP_UNSUPP_SERVICE_PROTO || ret == DROP_UNKNOWN_L4)
-            goto skip_service;
-        else
-            return ret;
+            goto skip_svc;
+        return ret;
     }
-
-    /* 5) Lookup the Service in the LB map */
     lb4_fill_key(&key, &tuple);
     svc = lb4_lookup_service(&key, is_defined(ENABLE_NODEPORT));
 
-    /* 6) If it's UDP, clone once per backend and drop the original */
+    /* 4) If UDP, fan‐out via dup_backends */
     if (svc && tuple.nexthdr == IPPROTO_UDP) {
         #pragma unroll
-        for (i = 0; i < svc->rev_n_backends; i++) {
-            __u32 be_idx = svc->rev_backends[i];
-            struct lb4_backend be = lb4_lookup_be(ctx, be_idx);
-
-            /* skip empty slots */
-            if (be.addr == 0 || be.ifindex == 0)
+        for (idx = 0; idx < MAX_DUP_BACKENDS; idx++) {
+            dbk.idx = (__u32)idx;
+            dbv = bpf_map_lookup_elem(&dup_backends, &dbk);
+            if (!dbv || dbv->ip == 0 || dbv->ifindex == 0)
                 continue;
 
-            /* clone & send into that backend’s veth */
-            bpf_clone_redirect(ctx, be.ifindex, BPF_F_INGRESS);
+            /* 4a) Rewrite IPv4 dst + L3 csum */
+            bpf_skb_store_bytes(ctx,
+                ETH_HLEN + offsetof(struct iphdr, daddr),
+                &dbv->ip, sizeof(dbv->ip), 0);
+            bpf_l3_csum_replace(ctx,
+                ETH_HLEN + offsetof(struct iphdr, check),
+                tuple.daddr, dbv->ip, sizeof(dbv->ip));
+
+            /* 4b) Rewrite UDP csum */
+            bpf_l4_csum_replace(ctx,
+                ETH_HLEN + l4_off + offsetof(struct udphdr, check),
+                tuple.daddr, dbv->ip, sizeof(dbv->ip));
+
+            /* 4c) Patch Ethernet DST MAC, restore SMAC */
+            bpf_skb_store_bytes(ctx,
+                offsetof(struct ethhdr, h_dest),
+                dbv->mac, ETH_ALEN, 0);
+            bpf_skb_store_bytes(ctx,
+                offsetof(struct ethhdr, h_source),
+                host_mac.addr, ETH_ALEN, 0);
+
+            /* 4d) Clone into pod veth on ingress */
+            bpf_clone_redirect(ctx, dbv->ifindex, BPF_F_INGRESS);
         }
-        /* drop the original so it doesn’t also go to backend[0] */
-        return CTX_DROP;
+        /* 5) Drop original */
+        return TCX_DROP;
     }
-    /* 7) Otherwise fall back to normal 1:1 LB (DNAT/SNAT) */
+    /* 6) Fallback to normal 1:1 LB */
     else if (svc) {
         ret = lb4_local(get_ct_map4(&tuple), ctx,
                         ipv4_is_fragment(ip4),
@@ -284,8 +303,8 @@ __per_packet_lb_svc_xlate_4(void *ctx, struct iphdr *ip4, __s8 *ext_err)
             return ret;
     }
 
-skip_service:
-    /* 8) Push state into CT and tail-call to CT_EGRESS */
+skip_svc:
+    /* 7) Store CT state & tail‐call */
     lb4_ctx_store_state(ctx, &ct_state_new, proxy_port, cluster_id);
     return tail_call_internal(ctx, CILIUM_CALL_IPV4_CT_EGRESS, ext_err);
 }
