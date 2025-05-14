@@ -69,6 +69,131 @@
                  _s, _d);                                                     \
 } while (0)
 
+/* Pack 8 bytes starting at ptr into a __u64 (big-endian) */
+#define PACK_U64(ptr) (                                                       \
+    (__u64)((__u8*)(ptr))[0] << 56 | (__u64)((__u8*)(ptr))[1] << 48 |         \
+    (__u64)((__u8*)(ptr))[2] << 40 | (__u64)((__u8*)(ptr))[3] << 32 |         \
+    (__u64)((__u8*)(ptr))[4] << 24 | (__u64)((__u8*)(ptr))[5] << 16 |         \
+    (__u64)((__u8*)(ptr))[6] <<  8 | (__u64)((__u8*)(ptr))[7]                \
+)
+
+/* Pack 4 bytes starting at ptr into a __u32 (big-endian) */
+#define PACK_U32(ptr) (                                                       \
+    (__u32)((__u8*)(ptr))[0] << 24 | (__u32)((__u8*)(ptr))[1] << 16 |         \
+    (__u32)((__u8*)(ptr))[2] <<  8 | (__u32)((__u8*)(ptr))[3]                \
+)
+
+/* Print bytes [0..15] of `epk` in one go (idx, hi64, lo64) */
+#define PRINT_EPK_RAW_HEAD(idx, epk) do {                                      \
+    __u64 _h0 = PACK_U64(&((epk).ip4));    /* bytes 0–7  */                    \
+    __u64 _h1 = PACK_U64((__u8*)&(epk) + 8); /* bytes 8–15 */                  \
+    trace_printk(                                                              \
+      "epk[%d]: raw_head=%016llx%016llx\n",                                     \
+      sizeof("epk[0]: raw_head=00000000000000000000000000000000\n"),           \
+      (idx), _h0, _h1                                                          \
+    );                                                                         \
+} while (0)
+
+/* Print bytes [16..19] of `epk` (idx, tail32) */
+#define PRINT_EPK_RAW_TAIL(idx, epk) do {                                      \
+    __u32 _t = PACK_U32((__u8*)&(epk) + 16); /* bytes 16–19 */                 \
+    trace_printk(                                                              \
+      "epk[%d]: raw_tail=%08x\n",                                              \
+      sizeof("epk[0]: raw_tail=00000000\n"),                                   \
+      (idx), _t                                                               \
+    );                                                                         \
+} while (0)
+
+static __always_inline int
+bpf_clone_redirect(void *ctx, __u32 ifindex, __u64 flags)
+{
+    /* cast the helper number to the correct signature and call it */
+    return (int) ((__u64 (*)(void *, __u32, __u64))
+                   (unsigned long)BPF_FUNC_clone_redirect)
+                  (ctx, ifindex, flags);
+}
+
+#ifndef BPF_SKB_STORE_BYTES_HELPER_H
+#define BPF_SKB_STORE_BYTES_HELPER_H
+
+/* helper number */
+#ifndef BPF_FUNC_skb_store_bytes
+# define BPF_FUNC_skb_store_bytes 38
+#endif
+
+static __always_inline int
+bpf_skb_store_bytes(void *ctx, __u32 offset,
+                    const void *from, __u32 len, __u64 flags)
+{
+    long ret;
+    register long r1 asm("r1") = (long)ctx;
+    register long r2 asm("r2") = (long)offset;
+    register long r3 asm("r3") = (long)from;
+    register long r4 asm("r4") = (long)len;
+    register long r5 asm("r5") = (long)flags;
+    /* 
+     * clang-for-BPF will lower this into exactly:
+     *   r0 = call BPF_FUNC_skb_store_bytes(r1,…,r5)
+     */
+    asm volatile (
+        "call %c[fn]\n"
+        : "=r"(ret)
+        : [fn] "i"(BPF_FUNC_skb_store_bytes),
+          "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
+        : "r0","r1","r2","r3","r4","r5","memory"
+    );
+    return (int)ret;
+}
+
+#endif /* BPF_SKB_STORE_BYTES_HELPER_H */
+
+#ifndef BPF_FUNC_l3_csum_replace
+# define BPF_FUNC_l3_csum_replace 10
+#endif
+#ifndef BPF_FUNC_l4_csum_replace
+# define BPF_FUNC_l4_csum_replace 11
+#endif
+
+static __always_inline long
+bpf_l3_csum_replace(void *ctx, __u32 offset,
+                    __u64 from, __u64 to, __u64 size)
+{
+    long ret;
+    register long r1 asm("r1") = (long)ctx;
+    register long r2 asm("r2") = (long)offset;
+    register long r3 asm("r3") = (long)from;
+    register long r4 asm("r4") = (long)to;
+    register long r5 asm("r5") = (long)size;
+    asm volatile (
+        "call %c[fn]\n"
+        : "=r"(ret)
+        : [fn] "i"(BPF_FUNC_l3_csum_replace),
+          "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
+        : "r0","r1","r2","r3","r4","r5","memory"
+    );
+    return ret;
+}
+
+static __always_inline long
+bpf_l4_csum_replace(void *ctx, __u32 offset,
+                    __u64 from, __u64 to, __u64 flags)
+{
+    long ret;
+    register long r1 asm("r1") = (long)ctx;
+    register long r2 asm("r2") = (long)offset;
+    register long r3 asm("r3") = (long)from;
+    register long r4 asm("r4") = (long)to;
+    register long r5 asm("r5") = (long)flags;
+    asm volatile (
+        "call %c[fn]\n"
+        : "=r"(ret)
+        : [fn] "i"(BPF_FUNC_l4_csum_replace),
+          "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
+        : "r0","r1","r2","r3","r4","r5","memory"
+    );
+    return ret;
+}
+
 static __always_inline bool allow_vlan(__u32 __maybe_unused ifindex, __u32 __maybe_unused vlan_id) {
     VLAN_FILTER(ifindex, vlan_id);
 }
@@ -813,92 +938,138 @@ struct {
 } CT_TAIL_CALL_BUFFER4 __section_maps_btf;
 
 static __always_inline int
-handle_ipv4(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
-        __u32 ipcache_srcid __maybe_unused,
-        const bool from_host __maybe_unused,
-        bool *punt_to_stack __maybe_unused,
-        __s8 *ext_err __maybe_unused)
+handle_ipv4(struct __ctx_buff *ctx,
+            __u32 secctx __maybe_unused,
+            __u32 ipcache_srcid __maybe_unused,
+            const bool from_host __maybe_unused,
+            bool *punt_to_stack __maybe_unused,
+            __s8 *ext_err __maybe_unused)
 {
-#ifdef ENABLE_HOST_FIREWALL
-    struct ct_buffer4 ct_buffer = {};
-    bool need_hostfw = false;
-    bool is_host_id = false;
+    /* common locals */
+    void             *data;
+    void             *data_end;
+    struct ethhdr    *eth;
+    struct iphdr     *ip4;
+    struct tcphdr    *tcp;
+    int               ret;
+#ifdef ENABLE_NODEPORT
+    /* for NodePort + UDP duplication */
+    bool              is_dsr;
+    int               l4_off;
+    int               idx;
+    struct dup_backends_key    dbk;
+    struct dup_backends_value *dbv;
+    union macaddr     host_mac;
 #endif
-    void *data, *data_end;
-    struct iphdr *ip4;
-    struct ethhdr *eth;
-    struct tcphdr *tcp __maybe_unused;
+#ifdef ENABLE_HOST_FIREWALL
+    /* for host-firewall */
+    struct ct_buffer4 ct_buffer;
+    bool              need_hostfw;
+    bool              is_host_id;
+#endif
 
-    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
-        trace_printk("handle_ipv4: invalid eth data\n",
-                    sizeof("handle_ipv4: invalid eth data\n"));
+    /* 1) Parse L2/L3 headers */
+    if (!revalidate_data(ctx, &data, &data_end, &eth))
         return DROP_INVALID;
-    }
-
-    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
-        trace_printk("handle_ipv4: invalid ip4 data\n",
-                    sizeof("handle_ipv4: invalid ip4 data\n"));
+    if (!revalidate_data(ctx, &data, &data_end, &ip4))
         return DROP_INVALID;
-    }
 
-    trace_printk("handle_ipv4: entry secctx=%u ipcache_srcid=%u from_host=%d\n",
-        sizeof("handle_ipv4: entry secctx=%u ipcache_srcid=%u from_host=%d\n"),
-        secctx, ipcache_srcid, from_host);
-
+    trace_printk("handle_ipv4: entry secctx=%u from_host=%d\n",
+                sizeof("handle_ipv4: entry secctx=%u from_host=%d\n"),
+                secctx, from_host);
     PRINT_MAC_PAIR("handle_ipv4: ", eth->h_source, eth->h_dest);
-
     trace_printk("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n",
-            sizeof("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n"),
-            &ip4->saddr, &ip4->daddr);
+                sizeof("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n"),
+                &ip4->saddr, &ip4->daddr);
 
-    if (ip4->protocol == IPPROTO_TCP && revalidate_data(ctx, &data, &data_end, &tcp) &&
-        (void *)tcp + sizeof(*tcp) <= data_end) {
-        trace_printk("handle_ipv4: TCP seq=%u\n",
-                    sizeof("handle_ipv4: TCP seq=%u\n"),
-                    bpf_ntohl(tcp->seq));
+    /* 2) Optionally log TCP sequence */
+    if (ip4->protocol == IPPROTO_TCP) {
+        if (revalidate_data(ctx, &data, &data_end, &tcp) &&
+            ((void *)tcp + sizeof(*tcp) <= data_end)) {
+            trace_printk("handle_ipv4: TCP seq=%u\n",
+                        sizeof("handle_ipv4: TCP seq=%u\n"),
+                        bpf_ntohl(tcp->seq));
+        }
     }
 
 #ifndef ENABLE_IPV4_FRAGMENTS
-    if (ipv4_is_fragment(ip4)) {
-        trace_printk("handle_ipv4: dropping fragment (fragments disabled)\n",
-                    sizeof("handle_ipv4: dropping fragment (fragments disabled)\n"));
+    if (ipv4_is_fragment(ip4))
         return DROP_FRAG_NOSUPPORT;
-    }
 #endif
 
+    /* 3) NodePort / service LB with UDP fan-out */
 #ifdef ENABLE_NODEPORT
     if (!from_host) {
         if (!ctx_skip_nodeport(ctx)) {
-            bool is_dsr = false;
-            int ret;
-            trace_printk("handle_ipv4: entering nodeport_lb4\n",
-                        sizeof("handle_ipv4: entering nodeport_lb4\n"));
-            ret = nodeport_lb4(ctx, ip4, ETH_HLEN, secctx, punt_to_stack,
-                              ext_err, &is_dsr);
-#ifdef ENABLE_IPV6
-            if (ret == NAT_46X64_RECIRC) {
-                trace_printk("handle_ipv4: redirecting to IPv6 handler\n",
-                            sizeof("handle_ipv4: redirecting to IPv6 handler\n"));
-                ctx_store_meta(ctx, CB_SRC_LABEL, secctx);
-                return tail_call_internal(ctx, CILIUM_CALL_IPV6_FROM_NETDEV,
-                                         ext_err);
+            ret = nodeport_lb4(ctx,
+                               ip4,
+                               ETH_HLEN,
+                               secctx,
+                               punt_to_stack,
+                               ext_err,
+                               &is_dsr);
+
+            /*
+             * If NodePort wants to redirect a UDP packet,
+             * clone it to all entries in dup_backends:
+             */
+            if (ret == TC_ACT_REDIRECT && ip4->protocol == IPPROTO_UDP) {
+                l4_off   = ETH_HLEN + ipv4_hdrlen(ip4);
+                host_mac = THIS_INTERFACE_MAC;
+                for (idx = 0; idx < MAX_DUP_BACKENDS; idx++) {
+                    dbk.idx = (__u32)idx;
+                    dbv      = map_lookup_elem(&dup_backends, &dbk);
+                    if (dbv == NULL || dbv->ip == 0 || dbv->ifindex == 0)
+                        continue;
+
+                    /* rewrite IPv4 dst + L3 csum */
+                    bpf_skb_store_bytes(ctx,
+                                        ETH_HLEN + offsetof(struct iphdr, daddr),
+                                        &dbv->ip,
+                                        sizeof(dbv->ip),
+                                        0);
+                    bpf_l3_csum_replace(ctx,
+                                        ETH_HLEN + offsetof(struct iphdr, check),
+                                        0,               /* old val ignored */
+                                        dbv->ip,
+                                        sizeof(dbv->ip));
+
+                    /* rewrite UDP csum */
+                    bpf_l4_csum_replace(ctx,
+                                        l4_off + offsetof(struct udphdr, check),
+                                        0,
+                                        dbv->ip,
+                                        sizeof(dbv->ip));
+
+                    /* patch Ethernet MACs */
+                    bpf_skb_store_bytes(ctx,
+                                        offsetof(struct ethhdr, h_dest),
+                                        dbv->mac,
+                                        ETH_ALEN,
+                                        0);
+                    bpf_skb_store_bytes(ctx,
+                                        offsetof(struct ethhdr, h_source),
+                                        host_mac.addr,
+                                        ETH_ALEN,
+                                        0);
+
+                    trace_printk("dup_backends cloning idx=%d ifidx=%u\n",
+                                sizeof("dup_backends cloning idx=%d ifidx=%u\n"),
+                                idx, dbv->ifindex);
+                    bpf_clone_redirect(ctx,
+                                       dbv->ifindex,
+                                       BPF_F_INGRESS);
+                }
             }
-#endif
-            if (ret < 0 || ret == TC_ACT_REDIRECT) {
-                trace_printk("handle_ipv4: nodeport_lb4 returned %d\n",
-                            sizeof("handle_ipv4: nodeport_lb4 returned %d\n"),
-                            ret);
+
+            /* honor redirect or drop from nodeport_lb4() */
+            if (ret < 0 || ret == TC_ACT_REDIRECT)
                 return ret;
-            }
-            if (*punt_to_stack) {
-                trace_printk("handle_ipv4: punt to stack\n",
-                            sizeof("handle_ipv4: punt to stack\n"));
+            if (*punt_to_stack)
                 return ret;
-            }
         }
     }
 #endif
-
 #ifdef ENABLE_HOST_FIREWALL
     if (from_host) {
         if (ipv4_host_policy_egress_lookup(ctx, secctx, ipcache_srcid, ip4, &ct_buffer)) {
