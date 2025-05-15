@@ -963,6 +963,8 @@ handle_ipv4(struct __ctx_buff *ctx,
     union macaddr host_mac = THIS_INTERFACE_MAC;
     __u32 old_daddr;
     __u32 new_daddr;
+    __u16 zero = 0;
+
 #ifdef ENABLE_NODEPORT
     int is_dsr;
 #endif
@@ -1040,27 +1042,26 @@ handle_ipv4(struct __ctx_buff *ctx,
 
             {
                 ret = bpf_skb_store_bytes(ctx, ETH_HLEN + offsetof(struct iphdr, daddr),
-                                          &new_daddr, sizeof(new_daddr), 0);
+                                        &new_daddr, sizeof(new_daddr), 0);
                 if (ret < 0)
                     continue;
 
                 ret = bpf_l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
-                                          old_daddr, new_daddr, sizeof(new_daddr));
+                                        old_daddr, new_daddr, sizeof(new_daddr));
                 if (ret < 0)
                     continue;
 
-                ret = bpf_l4_csum_replace(ctx, l4_off + offsetof(struct udphdr, check),
-                                          old_daddr, new_daddr, sizeof(new_daddr));
+                ret = bpf_skb_store_bytes(ctx, l4_off + offsetof(struct udphdr, check), &zero, sizeof(zero), 0);
                 if (ret < 0)
                     continue;
 
                 ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_dest),
-                                          dbv->mac, ETH_ALEN, 0);
+                                        dbv->mac, ETH_ALEN, 0);
                 if (ret < 0)
                     continue;
 
                 ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_source),
-                                          host_mac.addr, ETH_ALEN, 0);
+                                        host_mac.addr, ETH_ALEN, 0);
                 if (ret < 0)
                     continue;
 
@@ -1074,7 +1075,7 @@ handle_ipv4(struct __ctx_buff *ctx,
                     !revalidate_data(ctx, &data, &data_end, &ip4) ||
                     !revalidate_data(ctx, &data, &data_end, &udp)) {
                     trace_printk("dup_backends: revalidate after clone failed\n",
-                                 sizeof("dup_backends: revalidate after clone failed\n"));
+                                sizeof("dup_backends: revalidate after clone failed\n"));
                     break;
                 }
             }
