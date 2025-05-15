@@ -943,173 +943,247 @@ struct {
 
 static __always_inline int
 handle_ipv4(struct __ctx_buff *ctx,
-            __u32 secctx __maybe_unused,
-            __u32 ipcache_srcid __maybe_unused,
-            const bool from_host __maybe_unused,
-            bool *punt_to_stack __maybe_unused,
-            __s8 *ext_err __maybe_unused)
+            __u32 secctx __attribute__((unused)),
+            __u32 ipcache_srcid __attribute__((unused)),
+            const int from_host __attribute__((unused)),
+            int *punt_to_stack __attribute__((unused)),
+            __s8 *ext_err __attribute__((unused)))
 {
-    void                   *data;
-    void                   *data_end;
-    struct ethhdr          *eth;
-    struct iphdr           *ip4;
-    struct tcphdr          *tcp;
-    int                     ret __maybe_unused;
-
-    /* for unconditional UDP fan-out */
-    union macaddr           host_mac = THIS_INTERFACE_MAC;
+    void *data;
+    void *data_end;
+    struct ethhdr *eth;
+    struct iphdr *ip4;
+    struct tcphdr *tcp;
+    struct udphdr *udp;
+    int ret;
+    int idx;
+    int l4_off;
+    struct dup_backends_key dbk;
+    struct dup_backends_value *dbv;
+    union macaddr host_mac = THIS_INTERFACE_MAC;
     __u32 old_daddr;
     __u32 new_daddr;
-
-
 #ifdef ENABLE_NODEPORT
-    bool                    is_dsr;
+    int is_dsr;
 #endif
-    int                     idx;
-    int                     l4_off;
-    struct dup_backends_key    dbk;
-    struct dup_backends_value *dbv;
-
 #ifdef ENABLE_HOST_FIREWALL
-    struct ct_buffer4       ct_buffer;
-    bool                    need_hostfw = false;
-    bool                    is_host_id  = false;
+    struct ct_buffer4 ct_buffer;
+    int need_hostfw = 0;
+    int is_host_id = 0;
 #endif
 
     /* 1) Parse L2/L3 headers */
-    if (!revalidate_data(ctx, &data, &data_end, &eth))
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
+        trace_printk("handle_ipv4: invalid eth data\n",
+                     sizeof("handle_ipv4: invalid eth data\n"));
         return DROP_INVALID;
-    if (!revalidate_data(ctx, &data, &data_end, &ip4))
+    }
+    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+        trace_printk("handle_ipv4: invalid ip4 data\n",
+                     sizeof("handle_ipv4: invalid ip4 data\n"));
         return DROP_INVALID;
+    }
 
     trace_printk("handle_ipv4: entry secctx=%u from_host=%d\n",
-                sizeof("handle_ipv4: entry secctx=%u from_host=%d\n"),
-                secctx, from_host);
+                 sizeof("handle_ipv4: entry secctx=%u from_host=%d\n"),
+                 secctx, from_host);
     PRINT_MAC_PAIR("handle_ipv4: ", eth->h_source, eth->h_dest);
     trace_printk("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n",
-                sizeof("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n"),
-                &ip4->saddr, &ip4->daddr);
+                 sizeof("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n"),
+                 &ip4->saddr, &ip4->daddr);
 
-    /* 2) Optionally log TCP sequence */
+    /* 2) Log TCP sequence if applicable */
     if (ip4->protocol == IPPROTO_TCP) {
         if (revalidate_data(ctx, &data, &data_end, &tcp) &&
             ((void *)tcp + sizeof(*tcp) <= data_end)) {
             trace_printk("handle_ipv4: TCP seq=%u\n",
-                        sizeof("handle_ipv4: TCP seq=%u\n"),
-                        bpf_ntohl(tcp->seq));
+                         sizeof("handle_ipv4: TCP seq=%u\n"),
+                         bpf_ntohl(tcp->seq));
         }
     }
 
 #ifndef ENABLE_IPV4_FRAGMENTS
-    if (ipv4_is_fragment(ip4))
+    if (ipv4_is_fragment(ip4)) {
+        trace_printk("handle_ipv4: dropping fragment (fragments disabled)\n",
+                     sizeof("handle_ipv4: dropping fragment (fragments disabled)\n"));
         return DROP_FRAG_NOSUPPORT;
+    }
 #endif
 
     /* 3) NodePort / service LB */
 #ifdef ENABLE_NODEPORT
     if (!ctx_skip_nodeport(ctx)) {
-        ret = nodeport_lb4(ctx,
-                           ip4,
-                           ETH_HLEN,
-                           secctx,
-                           punt_to_stack,
-                           ext_err,
-                           &is_dsr);
-        if (ret < 0 || ret == TC_ACT_REDIRECT || *punt_to_stack)
+        ret = nodeport_lb4(ctx, ip4, ETH_HLEN, secctx, punt_to_stack, ext_err, &is_dsr);
+        if (ret < 0 || ret == TC_ACT_REDIRECT || *punt_to_stack) {
+            trace_printk("handle_ipv4: nodeport_lb4 returned %d\n",
+                         sizeof("handle_ipv4: nodeport_lb4 returned %d\n"),
+                         ret);
             return ret;
+        }
     }
 #endif
 
     /* 4) Unconditional UDP fan-out */
     if (ip4->protocol == IPPROTO_UDP) {
-        /* stash original dst and interface MAC */
+        struct lb4_key key;
+        struct lb4_service *svc;
+        int cloned = 0;
+
+        /* Validate UDP header */
+        if (!revalidate_data(ctx, &data, &data_end, &udp)) {
+            trace_printk("dup_backends: invalid UDP header\n",
+                         sizeof("dup_backends: invalid UDP header\n"));
+            goto skip_udp;
+        }
+
+        /* Verify service exists */
+        key.address = ip4->daddr;
+        key.dport = bpf_ntohs(udp->dest);
+        svc = lb4_lookup_service(&key, is_defined(ENABLE_NODEPORT));
+        if (!svc) {
+            trace_printk("dup_backends: service not found daddr=%pI4 dport=%u\n",
+                         sizeof("dup_backends: service not found daddr=%pI4 dport=%u\n"),
+                         &ip4->daddr, bpf_ntohs(udp->dest));
+            goto skip_udp;
+        }
+
+        /* Stash original dst and compute L4 offset */
         old_daddr = ip4->daddr;
-        l4_off    = ETH_HLEN + ipv4_hdrlen(ip4);
+        l4_off = ETH_HLEN + ipv4_hdrlen(ip4);
 
         for (idx = 0; idx < MAX_DUP_BACKENDS; idx++) {
             dbk.idx = (__u32)idx;
-            dbv      = map_lookup_elem(&dup_backends, &dbk);
-            if (dbv == NULL || dbv->ip == 0 || dbv->ifindex == 0)
+            dbv = map_lookup_elem(&dup_backends, &dbk);
+            if (!dbv || dbv->ip == 0 || dbv->ifindex == 0) {
+                trace_printk("dup_backends: invalid entry idx=%d ip=%pI4 ifidx=%u\n",
+                             sizeof("dup_backends: invalid entry idx=%d ip=%pI4 ifidx=%u\n"),
+                             idx, dbv ? &dbv->ip : 0, dbv ? dbv->ifindex : 0);
                 continue;
+            }
 
             new_daddr = dbv->ip;
 
-            /* rewrite IPv4 dst & adjust IPv4 checksum */
-            bpf_skb_store_bytes(ctx,
-                                ETH_HLEN + offsetof(struct iphdr, daddr),
-                                &new_daddr,
-                                sizeof(new_daddr),
-                                0);
-            bpf_l3_csum_replace(ctx,
-                                ETH_HLEN + offsetof(struct iphdr, check),
-                                old_daddr,
-                                new_daddr,
-                                sizeof(new_daddr));
+            /* Rewrite IPv4 dst */
+            ret = bpf_skb_store_bytes(ctx, ETH_HLEN + offsetof(struct iphdr, daddr),
+                                      &new_daddr, sizeof(new_daddr), 0);
+            if (ret < 0) {
+                trace_printk("dup_backends: idx=%d bpf_skb_store_bytes daddr failed: %d\n",
+                             sizeof("dup_backends: idx=%d bpf_skb_store_bytes daddr failed: %d\n"),
+                             idx, ret);
+                continue;
+            }
 
-            /* rewrite UDP checksum (pseudo-header delta) */
-            bpf_l4_csum_replace(ctx,
-                                l4_off   + offsetof(struct udphdr, check),
-                                old_daddr,
-                                new_daddr,
-                                sizeof(new_daddr));
+            /* Adjust IPv4 checksum */
+            ret = bpf_l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
+                                      old_daddr, new_daddr, sizeof(new_daddr));
+            if (ret < 0) {
+                trace_printk("dup_backends: idx=%d bpf_l3_csum_replace failed: %d\n",
+                             sizeof("dup_backends: idx=%d bpf_l3_csum_replace failed: %d\n"),
+                             idx, ret);
+                continue;
+            }
 
-            /* patch Ethernet MACs */
-            bpf_skb_store_bytes(ctx,
-                                offsetof(struct ethhdr, h_dest),
-                                dbv->mac,
-                                ETH_ALEN,
-                                0);
-            bpf_skb_store_bytes(ctx,
-                                offsetof(struct ethhdr, h_source),
-                                host_mac.addr,
-                                ETH_ALEN,
-                                0);
+            /* Adjust UDP checksum if present */
+            if (udp->check != 0) {
+                ret = bpf_l4_csum_replace(ctx, l4_off + offsetof(struct udphdr, check),
+                                          old_daddr, new_daddr, sizeof(new_daddr));
+                if (ret < 0) {
+                    trace_printk("dup_backends: idx=%d bpf_l4_csum_replace failed: %d\n",
+                                 sizeof("dup_backends: idx=%d bpf_l4_csum_replace failed: %d\n"),
+                                 idx, ret);
+                    continue;
+                }
+            }
 
-            trace_printk("dup_backends cloning idx=%d ifidx=%u\n",
-                        sizeof("dup_backends cloning idx=%d ifidx=%u\n"),
-                        idx, dbv->ifindex);
-            trace_printk("dup_backends cloning old_daddr=%pI4 new_daddr=%pI4\n",
-                        sizeof("dup_backends cloning old_daddr=%pI4 new_daddr=%pI4\n"),
-                        &old_daddr, &new_daddr);
-            PRINT_MAC_PAIR("dup_backends cloning: ", dbv->mac, host_mac.addr);
-            trace_printk("dup_backends cloning: src_ip=%pI4 dst_ip=%pI4\n",
-                        sizeof("dup_backends cloning: src_ip=%pI4 dst_ip=%pI4\n"),
-                        &ip4->saddr, &ip4->daddr);
-            bpf_clone_redirect(ctx,
-                              dbv->ifindex,
-                              BPF_F_INGRESS);
+            /* Patch Ethernet MACs */
+            ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_dest),
+                                      dbv->mac, ETH_ALEN, 0);
+            if (ret < 0) {
+                trace_printk("dup_backends: idx=%d bpf_skb_store_bytes dmac failed: %d\n",
+                             sizeof("dup_backends: idx=%d bpf_skb_store_bytes dmac failed: %d\n"),
+                             idx, ret);
+                continue;
+            }
+            ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_source),
+                                      host_mac.addr, ETH_ALEN, 0);
+            if (ret < 0) {
+                trace_printk("dup_backends: idx=%d bpf_skb_store_bytes smac failed: %d\n",
+                             sizeof("dup_backends: idx=%d bpf_skb_store_bytes smac failed: %d\n"),
+                             idx, ret);
+                continue;
+            }
+
+            /* Clone packet to backend */
+            ret = bpf_clone_redirect(ctx, dbv->ifindex, BPF_F_INGRESS);
+            if (ret < 0) {
+                trace_printk("dup_backends: idx=%d bpf_clone_redirect failed: %d\n",
+                             sizeof("dup_backends: idx=%d bpf_clone_redirect failed: %d\n"),
+                             idx, ret);
+                continue;
+            }
+
+            trace_printk("dup_backends: cloned idx=%d ifidx=%u ip=%pI4\n",
+                         sizeof("dup_backends: cloned idx=%d ifidx=%u ip=%pI4\n"),
+                         idx, dbv->ifindex, &new_daddr);
+            PRINT_MAC_PAIR("dup_backends: ", dbv->mac, host_mac.addr);
+            cloned = 1;
         }
+
+        if (cloned) {
+            trace_printk("dup_backends: dropping original packet\n",
+                         sizeof("dup_backends: dropping original packet\n"));
+            return TCX_DROP;
+        }
+        trace_printk("dup_backends: no valid backends, falling back\n",
+                     sizeof("dup_backends: no valid backends, falling back\n"));
     }
+skip_udp:
 
 #ifdef ENABLE_HOST_FIREWALL
-    /* host-firewall logic unchanged from original */
+    /* 5) Host firewall checks */
     if (from_host) {
         if (ipv4_host_policy_egress_lookup(ctx, secctx, ipcache_srcid, ip4, &ct_buffer)) {
-            if (unlikely(ct_buffer.ret < 0))
+            if (ct_buffer.ret < 0) {
+                trace_printk("handle_ipv4: egress lookup failed ret=%d\n",
+                             sizeof("handle_ipv4: egress lookup failed ret=%d\n"),
+                             ct_buffer.ret);
                 return ct_buffer.ret;
-            need_hostfw = true;
-            is_host_id  = (secctx == HOST_ID);
+            }
+            need_hostfw = 1;
+            is_host_id = (secctx == HOST_ID);
         }
     } else if (!ctx_skip_host_fw(ctx)) {
-        if (!revalidate_data(ctx, &data, &data_end, &ip4))
+        if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+            trace_printk("handle_ipv4: invalid data in host fw check\n",
+                         sizeof("handle_ipv4: invalid data in host fw check\n"));
             return DROP_INVALID;
+        }
         if (ipv4_host_policy_ingress_lookup(ctx, ip4, &ct_buffer)) {
-            if (unlikely(ct_buffer.ret < 0))
+            if (ct_buffer.ret < 0) {
+                trace_printk("handle_ipv4: ingress lookup failed ret=%d\n",
+                             sizeof("handle_ipv4: ingress lookup failed ret=%d\n"),
+                             ct_buffer.ret);
                 return ct_buffer.ret;
-            need_hostfw = true;
+            }
+            need_hostfw = 1;
         }
     }
     if (need_hostfw) {
         __u32 zero = 0;
-        map_update_elem(&CT_TAIL_CALL_BUFFER4, &zero, &ct_buffer, 0);
+        ret = map_update_elem(&CT_TAIL_CALL_BUFFER4, &zero, &ct_buffer, 0);
+        if (ret < 0) {
+            trace_printk("handle_ipv4: failed to update tail call buffer\n",
+                         sizeof("handle_ipv4: failed to update tail call buffer\n"));
+            return DROP_INVALID_TC_BUFFER;
+        }
         ctx_store_meta(ctx, CB_FROM_HOST,
-                      (FROM_HOST_FLAG_NEED_HOSTFW |
-                       (is_host_id ? FROM_HOST_FLAG_HOST_ID : 0)));
+                       (FROM_HOST_FLAG_NEED_HOSTFW |
+                        (is_host_id ? FROM_HOST_FLAG_HOST_ID : 0)));
     }
 #endif
 
     trace_printk("handle_ipv4: returning CTX_ACT_OK\n",
-                sizeof("handle_ipv4: returning CTX_ACT_OK\n"));
+                 sizeof("handle_ipv4: returning CTX_ACT_OK\n"));
     return CTX_ACT_OK;
 }
 
