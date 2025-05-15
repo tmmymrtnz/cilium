@@ -983,27 +983,17 @@ handle_ipv4(struct __ctx_buff *ctx,
         return DROP_INVALID;
     }
 
-    trace_printk("handle_ipv4: entry secctx=%u from_host=%d\n",
-                 sizeof("handle_ipv4: entry secctx=%u from_host=%d\n"),
-                 secctx, from_host);
-    PRINT_MAC_PAIR("handle_ipv4: ", eth->h_source, eth->h_dest);
-    trace_printk("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n",
-                 sizeof("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n"),
-                 &ip4->saddr, &ip4->daddr);
+    trace_printk("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n", sizeof("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n"), &ip4->saddr, &ip4->daddr);
 
     if (ip4->protocol == IPPROTO_TCP) {
-        if (revalidate_data(ctx, &data, &data_end, &tcp) &&
-            ((void *)tcp + sizeof(*tcp) <= data_end)) {
-            trace_printk("handle_ipv4: TCP seq=%u\n",
-                         sizeof("handle_ipv4: TCP seq=%u\n"),
-                         bpf_ntohl(tcp->seq));
+        if (revalidate_data(ctx, &data, &data_end, &tcp) && ((void *)tcp + sizeof(*tcp) <= data_end)) {
+            trace_printk("handle_ipv4: TCP seq=%u\n", sizeof("handle_ipv4: TCP seq=%u\n"), bpf_ntohl(tcp->seq));
         }
     }
 
 #ifndef ENABLE_IPV4_FRAGMENTS
     if (ipv4_is_fragment(ip4)) {
-        trace_printk("handle_ipv4: dropping fragment (fragments disabled)\n",
-                     sizeof("handle_ipv4: dropping fragment (fragments disabled)\n"));
+        trace_printk("handle_ipv4: dropping fragment (fragments disabled)\n", sizeof("handle_ipv4: dropping fragment (fragments disabled)\n"));
         return DROP_FRAG_NOSUPPORT;
     }
 #endif
@@ -1012,9 +1002,7 @@ handle_ipv4(struct __ctx_buff *ctx,
     if (!ctx_skip_nodeport(ctx)) {
         ret = nodeport_lb4(ctx, ip4, ETH_HLEN, secctx, punt_to_stack, ext_err, &is_dsr);
         if (ret < 0 || ret == TC_ACT_REDIRECT || *punt_to_stack) {
-            trace_printk("handle_ipv4: nodeport_lb4 returned %d\n",
-                         sizeof("handle_ipv4: nodeport_lb4 returned %d\n"),
-                         ret);
+            trace_printk("handle_ipv4: nodeport_lb4 returned %d\n", sizeof("handle_ipv4: nodeport_lb4 returned %d\n"), ret);
             return ret;
         }
     }
@@ -1035,54 +1023,60 @@ handle_ipv4(struct __ctx_buff *ctx,
             dbk.idx = idx;
             dbv = map_lookup_elem(&dup_backends, &dbk);
             if (!dbv || dbv->ip == 0 || dbv->ifindex == 0) {
+                trace_printk("clone[%d]: invalid backend entry\n", sizeof("clone[%d]: invalid backend entry\n"), idx);
                 continue;
             }
 
             new_daddr = dbv->ip;
+            trace_printk("clone[%d]: redirecting to ip=%pI4 ifindex=%u\n", sizeof("clone[%d]: redirecting to ip=%pI4 ifindex=%u\n"), idx, &new_daddr, dbv->ifindex);
 
-            {
-                ret = bpf_skb_store_bytes(ctx, ETH_HLEN + offsetof(struct iphdr, daddr),
-                                        &new_daddr, sizeof(new_daddr), 0);
-                if (ret < 0)
-                    continue;
+            ret = bpf_skb_store_bytes(ctx, ETH_HLEN + offsetof(struct iphdr, daddr), &new_daddr, sizeof(new_daddr), 0);
+            if (ret < 0) {
+                trace_printk("clone[%d]: failed to store new daddr\n", sizeof("clone[%d]: failed to store new daddr\n"), idx);
+                continue;
+            }
 
-                ret = bpf_l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
-                                        old_daddr, new_daddr, sizeof(new_daddr));
-                if (ret < 0)
-                    continue;
+            ret = bpf_l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check), old_daddr, new_daddr, sizeof(new_daddr));
+            if (ret < 0) {
+                trace_printk("clone[%d]: failed to update IP checksum\n", sizeof("clone[%d]: failed to update IP checksum\n"), idx);
+                continue;
+            }
 
-                ret = bpf_skb_store_bytes(ctx, l4_off + offsetof(struct udphdr, check), &zero, sizeof(zero), 0);
-                if (ret < 0)
-                    continue;
+            ret = bpf_skb_store_bytes(ctx, l4_off + offsetof(struct udphdr, check), &zero, sizeof(zero), 0);
+            if (ret < 0) {
+                trace_printk("clone[%d]: failed to zero UDP checksum\n", sizeof("clone[%d]: failed to zero UDP checksum\n"), idx);
+                continue;
+            }
 
-                ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_dest),
-                                        dbv->mac, ETH_ALEN, 0);
-                if (ret < 0)
-                    continue;
+            ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_dest), dbv->mac, ETH_ALEN, 0);
+            if (ret < 0) {
+                trace_printk("clone[%d]: failed to store dmac\n", sizeof("clone[%d]: failed to store dmac\n"), idx);
+                continue;
+            }
 
-                ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_source),
-                                        host_mac.addr, ETH_ALEN, 0);
-                if (ret < 0)
-                    continue;
+            ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_source), host_mac.addr, ETH_ALEN, 0);
+            if (ret < 0) {
+                trace_printk("clone[%d]: failed to store smac\n", sizeof("clone[%d]: failed to store smac\n"), idx);
+                continue;
+            }
 
-                ret = bpf_clone_redirect(ctx, dbv->ifindex, BPF_F_INGRESS);
-                if (ret < 0)
-                    continue;
+            ret = bpf_clone_redirect(ctx, dbv->ifindex, BPF_F_INGRESS);
+            trace_printk("clone[%d]: bpf_clone_redirect returned %d\n", sizeof("clone[%d]: bpf_clone_redirect returned %d\n"), idx, ret);
+            if (ret < 0)
+                continue;
 
-                cloned = 1;
+            cloned = 1;
 
-                if (!revalidate_data(ctx, &data, &data_end, &eth) ||
-                    !revalidate_data(ctx, &data, &data_end, &ip4) ||
-                    !revalidate_data(ctx, &data, &data_end, &udp)) {
-                    trace_printk("dup_backends: revalidate after clone failed\n",
-                                sizeof("dup_backends: revalidate after clone failed\n"));
-                    break;
-                }
+            if (!revalidate_data(ctx, &data, &data_end, &eth) ||
+                !revalidate_data(ctx, &data, &data_end, &ip4) ||
+                !revalidate_data(ctx, &data, &data_end, &udp)) {
+                trace_printk("clone[%d]: revalidate after clone failed\n", sizeof("clone[%d]: revalidate after clone failed\n"), idx);
+                continue;
             }
         }
 
         if (cloned) {
-            trace_printk("dup_backends: dropping original\n", sizeof("dup_backends: dropping original\n"));
+            trace_printk("dup_backends: dropping original packet\n", sizeof("dup_backends: dropping original packet\n"));
             return TCX_DROP;
         }
     }
