@@ -941,6 +941,7 @@ struct {
     __uint(max_entries, 1);
 } CT_TAIL_CALL_BUFFER4 __section_maps_btf;
 
+static __always_inline int
 handle_ipv4(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
         __u32 ipcache_srcid __maybe_unused,
         const bool from_host __maybe_unused,
