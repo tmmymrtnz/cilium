@@ -1024,7 +1024,6 @@ handle_ipv4(struct __ctx_buff *ctx,
     if (ip4->protocol == IPPROTO_UDP) {
         /* stash original dst and interface MAC */
         old_daddr = ip4->daddr;
-        host_mac  = THIS_INTERFACE_MAC;
         l4_off    = ETH_HLEN + ipv4_hdrlen(ip4);
 
         for (idx = 0; idx < MAX_DUP_BACKENDS; idx++) {
