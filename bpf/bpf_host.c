@@ -1084,17 +1084,15 @@ handle_ipv4(struct __ctx_buff *ctx,
             }
 
             /* Adjust UDP checksum if present */
-            if (udp->check != 0) {
-                ret = bpf_l4_csum_replace(ctx, l4_off + offsetof(struct udphdr, check),
-                                          old_daddr, new_daddr, sizeof(new_daddr));
-                if (ret < 0) {
-                    trace_printk("dup_backends: idx=%d bpf_l4_csum_replace failed: %d\n",
-                                 sizeof("dup_backends: idx=%d bpf_l4_csum_replace failed: %d\n"),
-                                 idx, ret);
-                    continue;
-                }
+            ret = bpf_l4_csum_replace(ctx, l4_off + offsetof(struct udphdr, check),
+                                        old_daddr, new_daddr, sizeof(new_daddr));
+            if (ret < 0) {
+                trace_printk("dup_backends: idx=%d bpf_l4_csum_replace failed: %d\n",
+                                sizeof("dup_backends: idx=%d bpf_l4_csum_replace failed: %d\n"),
+                                idx, ret);
+                continue;
             }
-
+            
             /* Patch Ethernet MACs */
             ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_dest),
                                       dbv->mac, ETH_ALEN, 0);
