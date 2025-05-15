@@ -1013,7 +1013,7 @@ handle_ipv4(struct __ctx_buff *ctx,
 
         if (!revalidate_data(ctx, &data, &data_end, &udp)) {
             trace_printk("dup_backends: invalid UDP header\n",
-                         sizeof("dup_backends: invalid UDP header\n"));
+                        sizeof("dup_backends: invalid UDP header\n"));
             goto skip_udp;
         }
 
@@ -1025,100 +1025,106 @@ handle_ipv4(struct __ctx_buff *ctx,
             dbv = map_lookup_elem(&dup_backends, &dbk);
             if (!dbv || dbv->ip == 0 || dbv->ifindex == 0) {
                 trace_printk("clone[%d]: invalid backend entry\n",
-                             sizeof("clone[%d]: invalid backend entry\n"), idx);
+                            sizeof("clone[%d]: invalid backend entry\n"), idx);
                 continue;
             }
 
             trace_printk("clone[%d]: map_lookup -> ip=%pI4 ifindex=%u\n",
-                         sizeof("clone[%d]: map_lookup -> ip=%pI4 ifindex=%u\n"),
-                         idx, &dbv->ip, dbv->ifindex);
+                        sizeof("clone[%d]: map_lookup -> ip=%pI4 ifindex=%u\n"),
+                        idx, &dbv->ip, dbv->ifindex);
             PRINT_MAC_PAIR("clone lookup: ", dbv->mac, host_mac.addr);
 
             new_daddr = dbv->ip;
             trace_printk("clone[%d]: redirecting to ip=%pI4 ifindex=%u\n",
-                         sizeof("clone[%d]: redirecting to ip=%pI4 ifindex=%u\n"),
-                         idx, &new_daddr, dbv->ifindex);
+                        sizeof("clone[%d]: redirecting to ip=%pI4 ifindex=%u\n"),
+                        idx, &new_daddr, dbv->ifindex);
 
             ret = bpf_skb_store_bytes(ctx, ETH_HLEN + offsetof(struct iphdr, daddr),
-                                      &new_daddr, sizeof(new_daddr), 0);
+                                    &new_daddr, sizeof(new_daddr), 0);
             if (ret < 0) {
                 trace_printk("clone[%d]: failed to store new daddr\n",
-                             sizeof("clone[%d]: failed to store new daddr\n"), idx);
+                            sizeof("clone[%d]: failed to store new daddr\n"), idx);
                 continue;
             }
 
             ret = bpf_l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
-                                      old_daddr, new_daddr, sizeof(new_daddr));
+                                    old_daddr, new_daddr, sizeof(new_daddr));
             if (ret < 0) {
                 trace_printk("clone[%d]: failed to update IP checksum\n",
-                             sizeof("clone[%d]: failed to update IP checksum\n"), idx);
+                            sizeof("clone[%d]: failed to update IP checksum\n"), idx);
                 continue;
             }
 
             ret = bpf_skb_store_bytes(ctx, l4_off + offsetof(struct udphdr, check),
-                                      &zero, sizeof(zero), 0);
+                                    &zero, sizeof(zero), 0);
             if (ret < 0) {
                 trace_printk("clone[%d]: failed to zero UDP checksum\n",
-                             sizeof("clone[%d]: failed to zero UDP checksum\n"), idx);
+                            sizeof("clone[%d]: failed to zero UDP checksum\n"), idx);
                 continue;
             }
 
             ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_dest),
-                                      dbv->mac, ETH_ALEN, 0);
+                                    dbv->mac, ETH_ALEN, 0);
             if (ret < 0) {
                 trace_printk("clone[%d]: failed to store dmac\n",
-                             sizeof("clone[%d]: failed to store dmac\n"), idx);
+                            sizeof("clone[%d]: failed to store dmac\n"), idx);
                 continue;
             }
 
             ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_source),
-                                      host_mac.addr, ETH_ALEN, 0);
+                                    host_mac.addr, ETH_ALEN, 0);
             if (ret < 0) {
                 trace_printk("clone[%d]: failed to store smac\n",
-                             sizeof("clone[%d]: failed to store smac\n"), idx);
+                            sizeof("clone[%d]: failed to store smac\n"), idx);
                 continue;
             }
 
             ret = bpf_clone_redirect(ctx, dbv->ifindex, BPF_F_INGRESS);
             trace_printk("clone[%d]: bpf_clone_redirect returned %d\n",
-                         sizeof("clone[%d]: bpf_clone_redirect returned %d\n"),
-                         idx, ret);
+                        sizeof("clone[%d]: bpf_clone_redirect returned %d\n"),
+                        idx, ret);
             if (ret < 0)
                 continue;
 
             cloned = 1;
 
-            /* Restore original headers for next clone */
+            // Restore original packet headers for next iteration
             ret = bpf_skb_store_bytes(ctx, ETH_HLEN + offsetof(struct iphdr, daddr),
-                                      &old_daddr, sizeof(old_daddr), 0);
+                                    &old_daddr, sizeof(old_daddr), 0);
             if (ret < 0) {
                 trace_printk("clone[%d]: failed to restore daddr\n",
-                             sizeof("clone[%d]: failed to restore daddr\n"), idx);
+                            sizeof("clone[%d]: failed to restore daddr\n"), idx);
                 break;
             }
 
-            ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_dest),
-                                      eth->h_dest, ETH_ALEN, 0);
-            ret |= bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_source),
-                                       eth->h_source, ETH_ALEN, 0);
+            ret = bpf_l3_csum_replace(ctx, ETH_HLEN + offsetof(struct iphdr, check),
+                                    new_daddr, old_daddr, sizeof(old_daddr));
+            if (ret < 0) {
+                trace_printk("clone[%d]: failed to restore IP checksum\n",
+                            sizeof("clone[%d]: failed to restore IP checksum\n"), idx);
+                break;
+            }
+
+            ret = bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_dest), eth->h_dest, ETH_ALEN, 0);
+            ret |= bpf_skb_store_bytes(ctx, offsetof(struct ethhdr, h_source), eth->h_source, ETH_ALEN, 0);
             if (ret < 0) {
                 trace_printk("clone[%d]: failed to restore MACs\n",
-                             sizeof("clone[%d]: failed to restore MACs\n"), idx);
+                            sizeof("clone[%d]: failed to restore MACs\n"), idx);
                 break;
             }
 
             if (!revalidate_data(ctx, &data, &data_end, &eth) ||
                 !revalidate_data(ctx, &data, &data_end, &ip4) ||
                 !revalidate_data(ctx, &data, &data_end, &udp)) {
-                trace_printk("clone[%d]: revalidate after clone failed\n",
-                             sizeof("clone[%d]: revalidate after clone failed\n"), idx);
+                trace_printk("clone[%d]: revalidate after restore failed\n",
+                            sizeof("clone[%d]: revalidate after restore failed\n"), idx);
                 break;
             }
         }
 
         if (cloned) {
             trace_printk("dup_backends: dropping original packet\n",
-                         sizeof("dup_backends: dropping original packet\n"));
+                        sizeof("dup_backends: dropping original packet\n"));
             return TCX_DROP;
         }
     }
