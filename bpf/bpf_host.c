@@ -946,7 +946,7 @@ handle_ipv4(struct __ctx_buff *ctx,
             __u32 secctx __attribute__((unused)),
             __u32 ipcache_srcid __attribute__((unused)),
             const int from_host __attribute__((unused)),
-            int *punt_to_stack __attribute__((unused)),
+            bool *punt_to_stack __attribute__((unused)),
             __s8 *ext_err __attribute__((unused)))
 {
     void *data;
