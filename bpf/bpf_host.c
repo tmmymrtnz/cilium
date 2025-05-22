@@ -198,17 +198,6 @@ bpf_l4_csum_replace(void *ctx, __u32 offset,
     return ret;
 }
 
-#ifndef BPF_FUNC_skb_clone
-# define BPF_FUNC_skb_clone 27
-#endif
-static __always_inline struct __sk_buff *
-bpf_skb_clone(void *ctx, __u64 flags)
-{
-    return (struct __sk_buff *)
-        ((__u64 (*)(void *, __u64))(unsigned long)BPF_FUNC_skb_clone)
-        (ctx, flags);
-}
-
 static __always_inline bool allow_vlan(__u32 __maybe_unused ifindex, __u32 __maybe_unused vlan_id) {
     VLAN_FILTER(ifindex, vlan_id);
 }
@@ -953,174 +942,142 @@ struct {
 } CT_TAIL_CALL_BUFFER4 __section_maps_btf;
 
 static __always_inline int
-handle_ipv4(struct __ctx_buff *ctx,
-            __u32 secctx __maybe_unused,
-            __u32 ipcache_srcid __maybe_unused,
-            const bool from_host __maybe_unused,
-            bool *punt_to_stack __maybe_unused,
-            __s8 *ext_err __maybe_unused)
+handle_ipv4(struct __ctx_buff *ctx, __u32 secctx __maybe_unused,
+        __u32 ipcache_srcid __maybe_unused,
+        const bool from_host __maybe_unused,
+        bool *punt_to_stack __maybe_unused,
+        __s8 *ext_err __maybe_unused)
 {
 #ifdef ENABLE_HOST_FIREWALL
     struct ct_buffer4 ct_buffer = {};
-    bool need_hostfw = false, is_host_id = false;
+    bool need_hostfw = false;
+    bool is_host_id = false;
 #endif
-    void              *data, *data_end;
-    struct ethhdr     *eth;
-    struct iphdr      *ip4;
-    struct udphdr     *udp;
-    struct dup_backends_key    key;
-    struct dup_backends_value *be;
-    struct __sk_buff          *skb2;
-    __u32              i;
+    void *data, *data_end;
+    struct iphdr *ip4;
+    struct ethhdr *eth;
+    struct tcphdr *tcp __maybe_unused;
 
-    /* our magic VIP+port to match on */
-    __be32 svc_vip  = __constant_htonl(0x0a00000f);
-    __u16  svc_port = __constant_htons(9000);
-
-    /* a tiny Ethernet+IPv4+UDP “template” header (no payload) */
-    #pragma clang section data = ".rodata"
-    static const unsigned char template_pkt[] = {
-        /* Eth: dst=ff:ff:ff:ff:ff:ff, src=00:00:00:00:00:00, type=0x0800 */
-        0xff,0xff,0xff,0xff,0xff,0xff,
-        0x00,0x00,0x00,0x00,0x00,0x00,
-        0x08,0x00,
-        /* IPv4: ver=4, ihl=5, tos=0, tot_len=0x0028, id=0, flags+frag=0,
-         * ttl=64, proto=17, hdr_checksum=0,
-         * src=0.0.0.0, dst=10.0.0.15 */
-        0x45,0x00, 0x00,0x28, 0x00,0x00, 0x00,0x00,
-        0x40, 0x11, 0x00,0x00,
-        0x00,0x00,0x00,0x00,
-        0x0a,0x00,0x00,0x0f,
-        /* UDP: src=1234, dst=9000, len=0x0014, checksum=0 */
-        0x04,0xd2,              /*  1234 */
-        0x23,0x28,              /* 9000 */
-        0x00,0x14, 0x00,0x00
-    };
-    const int template_len = sizeof(template_pkt);
-
-    /* 1) parse L2/L3 */
-    if (!revalidate_data(ctx, &data, &data_end, &eth))
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
+        trace_printk("handle_ipv4: invalid eth data\n",
+                    sizeof("handle_ipv4: invalid eth data\n"));
         return DROP_INVALID;
-    if (!revalidate_data(ctx, &data, &data_end, &ip4))
-        return DROP_INVALID;
-
-    /* 2) UDP fan-out by building a new packet from scratch */
-    if (ip4->protocol == IPPROTO_UDP) {
-        /* point to UDP header, verify it’s all in-bounds */
-        void *udp_ptr = (void*)ip4 + ip4->ihl*4;
-        if (revalidate_data(ctx, &data, &data_end, &udp_ptr)) {
-            udp = udp_ptr;
-            if (ip4->daddr == svc_vip && udp->dest == svc_port) {
-                for (i = 0; i < MAX_DUP_BACKENDS; i++) {
-                    key.idx = i;
-                    be = map_lookup_elem(&dup_backends, &key);
-                    if (!be || be->ip == 0)
-                        continue;
-
-                    /* clone just to get a fresh skb we can overwrite */
-                    skb2 = bpf_skb_clone(ctx, 0);
-                    if (!skb2)
-                        continue;
-
-                    /* grow headroom by exactly our template size */
-                    if (bpf_skb_adjust_room(skb2,
-                                            template_len,
-                                            BPF_ADJ_ROOM_NET,
-                                            0) < 0)
-                        continue;
-
-                    /* copy in our fixed Ethernet+IP+UDP header */
-                    if (bpf_skb_store_bytes(skb2,
-                                            0,
-                                            template_pkt,
-                                            template_len,
-                                            0) < 0)
-                        continue;
-
-                    /* patch in per-backend DST IP */
-                    bpf_skb_store_bytes(skb2,
-                        ETH_HLEN + offsetof(struct iphdr, daddr),
-                        &be->ip, sizeof(be->ip), 0);
-
-                    /* recompute IP checksum */
-                    bpf_l3_csum_replace(skb2,
-                        ETH_HLEN + offsetof(struct iphdr, check),
-                        svc_vip, be->ip, sizeof(be->ip));
-
-                    /* patch in per-backend DST UDP port */
-                    __u16 be_port = __constant_htons( svc_port ); // or custom
-                    bpf_skb_store_bytes(skb2,
-                        ETH_HLEN + sizeof(struct iphdr)
-                                  + offsetof(struct udphdr, dest),
-                        &be_port, sizeof(be_port), 0);
-
-                    /* zero the UDP checksum */
-                    __u16 zero = 0;
-                    bpf_skb_store_bytes(skb2,
-                        ETH_HLEN + sizeof(struct iphdr)
-                                  + offsetof(struct udphdr, check),
-                        &zero, sizeof(zero), 0);
-
-                    /* send it out on the backend’s ifindex */
-                    bpf_clone_redirect(skb2, be->ifindex, 0);
-                }
-            }
-        }
     }
 
-    /* 3) original fragment / NodePort logic */
+    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+        trace_printk("handle_ipv4: invalid ip4 data\n",
+                    sizeof("handle_ipv4: invalid ip4 data\n"));
+        return DROP_INVALID;
+    }
+
+    trace_printk("handle_ipv4: entry secctx=%u ipcache_srcid=%u from_host=%d\n",
+        sizeof("handle_ipv4: entry secctx=%u ipcache_srcid=%u from_host=%d\n"),
+        secctx, ipcache_srcid, from_host);
+
+    PRINT_MAC_PAIR("handle_ipv4: ", eth->h_source, eth->h_dest);
+
+    trace_printk("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n",
+            sizeof("handle_ipv4: src_ip=%pI4 dst_ip=%pI4\n"),
+            &ip4->saddr, &ip4->daddr);
+
+    if (ip4->protocol == IPPROTO_TCP && revalidate_data(ctx, &data, &data_end, &tcp) &&
+        (void *)tcp + sizeof(*tcp) <= data_end) {
+        trace_printk("handle_ipv4: TCP seq=%u\n",
+                    sizeof("handle_ipv4: TCP seq=%u\n"),
+                    bpf_ntohl(tcp->seq));
+    }
+
 #ifndef ENABLE_IPV4_FRAGMENTS
-    if (ipv4_is_fragment(ip4))
+    if (ipv4_is_fragment(ip4)) {
+        trace_printk("handle_ipv4: dropping fragment (fragments disabled)\n",
+                    sizeof("handle_ipv4: dropping fragment (fragments disabled)\n"));
         return DROP_FRAG_NOSUPPORT;
+    }
 #endif
 
 #ifdef ENABLE_NODEPORT
-    if (!from_host && !ctx_skip_nodeport(ctx)) {
-        bool is_dsr = false;
-        int ret = nodeport_lb4(ctx, ip4, ETH_HLEN,
-                               secctx, punt_to_stack, ext_err, &is_dsr);
+    if (!from_host) {
+        if (!ctx_skip_nodeport(ctx)) {
+            bool is_dsr = false;
+            int ret;
+            trace_printk("handle_ipv4: entering nodeport_lb4\n",
+                        sizeof("handle_ipv4: entering nodeport_lb4\n"));
+            ret = nodeport_lb4(ctx, ip4, ETH_HLEN, secctx, punt_to_stack,
+                              ext_err, &is_dsr);
 #ifdef ENABLE_IPV6
-        if (ret == NAT_46X64_RECIRC) {
-            ctx_store_meta(ctx, CB_SRC_LABEL, secctx);
-            return tail_call_internal(ctx,
-                                      CILIUM_CALL_IPV6_FROM_NETDEV,
-                                      ext_err);
-        }
+            if (ret == NAT_46X64_RECIRC) {
+                trace_printk("handle_ipv4: redirecting to IPv6 handler\n",
+                            sizeof("handle_ipv4: redirecting to IPv6 handler\n"));
+                ctx_store_meta(ctx, CB_SRC_LABEL, secctx);
+                return tail_call_internal(ctx, CILIUM_CALL_IPV6_FROM_NETDEV,
+                                         ext_err);
+            }
 #endif
-        if (ret < 0 || ret == TC_ACT_REDIRECT)
-            return ret;
-        if (*punt_to_stack)
-            return ret;
+            if (ret < 0 || ret == TC_ACT_REDIRECT) {
+                trace_printk("handle_ipv4: nodeport_lb4 returned %d\n",
+                            sizeof("handle_ipv4: nodeport_lb4 returned %d\n"),
+                            ret);
+                return ret;
+            }
+            if (*punt_to_stack) {
+                trace_printk("handle_ipv4: punt to stack\n",
+                            sizeof("handle_ipv4: punt to stack\n"));
+                return ret;
+            }
+        }
     }
 #endif
 
-    /* 4) host-firewall (unchanged) */
 #ifdef ENABLE_HOST_FIREWALL
     if (from_host) {
-        if (ipv4_host_policy_egress_lookup(ctx,
-               secctx, ipcache_srcid, ip4, &ct_buffer)) {
-            if (ct_buffer.ret < 0) return ct_buffer.ret;
-            need_hostfw = true; is_host_id = (secctx==HOST_ID);
+        if (ipv4_host_policy_egress_lookup(ctx, secctx, ipcache_srcid, ip4, &ct_buffer)) {
+            trace_printk("handle_ipv4: need egress policy check\n",
+                        sizeof("handle_ipv4: need egress policy check\n"));
+            if (unlikely(ct_buffer.ret < 0)) {
+                trace_printk("handle_ipv4: egress lookup failed ret=%d\n",
+                            sizeof("handle_ipv4: egress lookup failed ret=%d\n"),
+                            ct_buffer.ret);
+                return ct_buffer.ret;
+            }
+            need_hostfw = true;
+            is_host_id = secctx == HOST_ID;
         }
     } else if (!ctx_skip_host_fw(ctx)) {
-        if (!revalidate_data(ctx, &data, &data_end, &ip4))
+        if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
+            trace_printk("handle_ipv4: invalid data in host fw check\n",
+                        sizeof("handle_ipv4: invalid data in host fw check\n"));
             return DROP_INVALID;
+        }
         if (ipv4_host_policy_ingress_lookup(ctx, ip4, &ct_buffer)) {
-            if (ct_buffer.ret < 0) return ct_buffer.ret;
+            trace_printk("handle_ipv4: need ingress policy check\n",
+                        sizeof("handle_ipv4: need ingress policy check\n"));
+            if (unlikely(ct_buffer.ret < 0)) {
+                trace_printk("handle_ipv4: ingress lookup failed ret=%d\n",
+                            sizeof("handle_ipv4: ingress lookup failed ret=%d\n"),
+                            ct_buffer.ret);
+                return ct_buffer.ret;
+            }
             need_hostfw = true;
         }
     }
     if (need_hostfw) {
         __u32 zero = 0;
-        if (map_update_elem(&CT_TAIL_CALL_BUFFER4,
-                            &zero, &ct_buffer, 0) < 0)
+        if (map_update_elem(&CT_TAIL_CALL_BUFFER4, &zero, &ct_buffer, 0) < 0) {
+            trace_printk("handle_ipv4: failed to update tail call buffer\n",
+                        sizeof("handle_ipv4: failed to update tail call buffer\n"));
             return DROP_INVALID_TC_BUFFER;
+        }
+        trace_printk("handle_ipv4: updated tail call buffer for hostfw\n",
+                    sizeof("handle_ipv4: updated tail call buffer for hostfw\n"));
     }
+
     ctx_store_meta(ctx, CB_FROM_HOST,
-          (need_hostfw?FROM_HOST_FLAG_NEED_HOSTFW:0) |
-          (is_host_id ?FROM_HOST_FLAG_HOST_ID:0));
+                  (need_hostfw ? FROM_HOST_FLAG_NEED_HOSTFW : 0) |
+                  (is_host_id ? FROM_HOST_FLAG_HOST_ID : 0));
 #endif
 
+    trace_printk("handle_ipv4: returning CTX_ACT_OK\n",
+                sizeof("handle_ipv4: returning CTX_ACT_OK\n"));
     return CTX_ACT_OK;
 }
 

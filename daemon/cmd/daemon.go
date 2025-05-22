@@ -12,6 +12,8 @@ import (
 	"net/netip"
 	"runtime"
 	"sync"
+	stdtime "time"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/cilium/statedb"
 	"github.com/sirupsen/logrus"
@@ -79,6 +81,7 @@ import (
 	"github.com/cilium/cilium/pkg/status"
 	"github.com/cilium/cilium/pkg/time"
 	wireguard "github.com/cilium/cilium/pkg/wireguard/agent"
+	"github.com/cilium/cilium/pkg/fanout"
 )
 
 const (
@@ -881,6 +884,9 @@ func newDaemon(ctx context.Context, cleaner *daemonCleanup, params *daemonParams
 		"location": "newDaemon()",
 	}).Info("Running custom Cilium Agent - Version: tmmymrtnz-custom")
 
+	// Start the UDP fanout proxy
+	d.startUDPFanout()
+
 	return &d, restoredEndpoints, nil
 }
 
@@ -890,6 +896,47 @@ func (d *Daemon) Close() {
 
 	// Ensures all controllers are stopped!
 	d.controllers.RemoveAllAndWait()
+}
+
+func (d *Daemon) startUDPFanout() {
+    go func() {
+        for {
+            // 1) List all Pod-B pods
+            pods, err := d.clientset.CoreV1().
+                Pods("default").
+                List(d.ctx, metav1.ListOptions{LabelSelector: "app=pod-b"})
+            if err != nil {
+                logrus.WithError(err).Warn("fanout: failed to list pod-b pods")
+                stdtime.Sleep(10 * stdtime.Second)
+                continue
+            }
+
+            // 2) Build backend addresses
+            addrs := make([]string, 0, len(pods.Items))
+            for _, p := range pods.Items {
+                if ip := p.Status.PodIP; ip != "" {
+                    addrs = append(addrs, fmt.Sprintf("%s:9000", ip))
+                }
+            }
+            if len(addrs) == 0 {
+                logrus.Warn("fanout: no pod-b backends found")
+                stdtime.Sleep(30 * stdtime.Second)
+                continue
+            }
+
+            // 3) Launch a new fan-out proxy
+            cfg := fanout.Config{
+                Listen:   ":9000",
+                Backends: addrs,
+            }
+            if err := fanout.Run(cfg); err != nil {
+                logrus.WithError(err).Error("fanout proxy failed")
+            }
+
+            // 4) Wait before refreshing
+            stdtime.Sleep(5 * stdtime.Second)
+        }
+    }()
 }
 
 // numWorkerThreads returns the number of worker threads with a minimum of 2.
