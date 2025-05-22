@@ -979,7 +979,6 @@ handle_ipv4(struct __ctx_buff *ctx,
     struct __sk_buff          *skb2;
     void                      *d2;
     struct iphdr              *ip2;
-    struct udphdr             *udp2;
     __u32                      i;
     __u64                      zero16 = 0ULL;
     __be32                     svc_vip  = __constant_htonl(0x0a00000f);
@@ -1027,7 +1026,6 @@ handle_ipv4(struct __ctx_buff *ctx,
                     /* reparse clone */
                     d2   = (void *)(long) skb2->data;
                     ip2  = d2 + ETH_HLEN;
-                    udp2 = (void *) ip2 + ip2->ihl * 4;
 
                     /* rewrite dst IP + csum */
                     ip2->daddr = be->ip;
