@@ -1005,12 +1005,12 @@ handle_ipv4(struct __ctx_buff *ctx,
 
     /* 2) UDP fan-out */
     if (ip4->protocol == IPPROTO_UDP) {
-        /* build a cursor to the start of the UDP header */
-        void *cursor = (void *)ip4 + ip4->ihl * 4;
+        /* point at the UDP header with its proper type */
+        struct udphdr *udp_ptr = (void *)ip4 + ip4->ihl * 4;
 
-        /* revalidate an entire struct udphdr at once */
-        if (revalidate_data(ctx, &data, &data_end, &cursor)) {
-            udp = cursor;
+        /* revalidate sizeof(*udp_ptr) bytes at once */
+        if (revalidate_data(ctx, &data, &data_end, &udp_ptr)) {
+            udp = udp_ptr;
             if (ip4->daddr == svc_vip && udp->dest == svc_port) {
                 for (i = 0; i < MAX_DUP_BACKENDS; i++) {
                     key.idx = i;
