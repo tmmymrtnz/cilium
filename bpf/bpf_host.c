@@ -1010,8 +1010,8 @@ handle_ipv4(struct __ctx_buff *ctx,
         /* step 1: point at UDP */
         udp_ptr = (void *) ip4 + ip4->ihl * 4;
         /* step 2: revalidate UDP header */
-        if (revalidate_data(ctx, &data, &data_end, udp_ptr)) {
-            udp = udp_ptr;
+        if (revalidate_data(ctx, &data, &data_end, &udp_ptr)) {
+            udp = (struct udphdr *)udp_ptr;
             if (ip4->daddr == svc_vip && udp->dest == svc_port) {
                 for (i = 0; i < MAX_DUP_BACKENDS; i++) {
                     key.idx = i;
