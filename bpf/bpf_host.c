@@ -973,7 +973,6 @@ handle_ipv4(struct __ctx_buff *ctx,
 
     /* fan-out locals */
     struct udphdr             *udp;
-    void                      *udp_ptr;
     struct dup_backends_key    key;
     struct dup_backends_value *be;
     struct __sk_buff          *skb2;
@@ -985,12 +984,12 @@ handle_ipv4(struct __ctx_buff *ctx,
     __u16                      svc_port = __constant_htons(9000);
 
     /* 1) parse L2+L3 */
-    if (! revalidate_data(ctx, &data, &data_end, &eth)) {
+    if (!revalidate_data(ctx, &data, &data_end, &eth)) {
         trace_printk("handle_ipv4: invalid eth data\n",
                     sizeof("handle_ipv4: invalid eth data\n"));
         return DROP_INVALID;
     }
-    if (! revalidate_data(ctx, &data, &data_end, &ip4)) {
+    if (!revalidate_data(ctx, &data, &data_end, &ip4)) {
         trace_printk("handle_ipv4: invalid ip4 data\n",
                     sizeof("handle_ipv4: invalid ip4 data\n"));
         return DROP_INVALID;
@@ -1006,11 +1005,12 @@ handle_ipv4(struct __ctx_buff *ctx,
 
     /* 2) UDP fan-out */
     if (ip4->protocol == IPPROTO_UDP) {
-        /* step 1: point at UDP */
-        udp_ptr = (void *) ip4 + ip4->ihl * 4;
-        /* step 2: revalidate UDP header */
-        if (revalidate_data(ctx, &data, &data_end, &udp_ptr)) {
-            udp = (struct udphdr *)udp_ptr;
+        /* build a cursor to the start of the UDP header */
+        void *cursor = (void *)ip4 + ip4->ihl * 4;
+
+        /* revalidate an entire struct udphdr at once */
+        if (revalidate_data(ctx, &data, &data_end, &cursor)) {
+            udp = cursor;
             if (ip4->daddr == svc_vip && udp->dest == svc_port) {
                 for (i = 0; i < MAX_DUP_BACKENDS; i++) {
                     key.idx = i;
@@ -1024,8 +1024,8 @@ handle_ipv4(struct __ctx_buff *ctx,
                         continue;
 
                     /* reparse clone */
-                    d2   = (void *)(long) skb2->data;
-                    ip2  = d2 + ETH_HLEN;
+                    d2  = (void *)(long)skb2->data;
+                    ip2 = d2 + ETH_HLEN;
 
                     /* rewrite dst IP + csum */
                     ip2->daddr = be->ip;
@@ -1057,7 +1057,7 @@ handle_ipv4(struct __ctx_buff *ctx,
 #endif
 
 #ifdef ENABLE_NODEPORT
-    if (! from_host && ! ctx_skip_nodeport(ctx)) {
+    if (!from_host && !ctx_skip_nodeport(ctx)) {
         bool is_dsr = false;
         int  np_ret;
         trace_printk("handle_ipv4: entering nodeport_lb4\n",
@@ -1089,8 +1089,8 @@ handle_ipv4(struct __ctx_buff *ctx,
             need_hostfw = true;
             is_host_id  = (secctx == HOST_ID);
         }
-    } else if (! ctx_skip_host_fw(ctx)) {
-        if (! revalidate_data(ctx, &data, &data_end, &ip4))
+    } else if (!ctx_skip_host_fw(ctx)) {
+        if (!revalidate_data(ctx, &data, &data_end, &ip4))
             return DROP_INVALID;
         if (ipv4_host_policy_ingress_lookup(ctx, ip4, &ct_buffer)) {
             if (ct_buffer.ret < 0)
