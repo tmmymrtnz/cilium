@@ -68,125 +68,102 @@
                  _s, _d);                                                     \
 } while (0)
 
-static __always_inline int
-rewrite_packet_headers(struct __ctx_buff *ctx,
-                       struct dup_backends_value *backend,
-                       __u32 l3_off)
+static __always_inline int rewrite_packet_headers(struct __ctx_buff *ctx,
+                                                  struct dup_backends_value *backend,
+                                                  __u32 l3_off)
 {
     void *data, *data_end;
     struct iphdr *ip4;
     struct udphdr *udp;
-    __u32 old_daddr;
+    __u32 old_daddr = 0;
     __u32 new_daddr = backend->ip;
     __s32 diff;
     int ret;
 
-    if (!revalidate_data(ctx, &data, &data_end))
-        return DROP_INVALID;
-
-    ip4 = (struct iphdr *)((char *)data + l3_off);
-    if ((void *)ip4 + sizeof(*ip4) > data_end)
+    if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                (void **)&ip4, l3_off,
+                                sizeof(*ip4), false))
         return DROP_INVALID;
 
     old_daddr = ip4->daddr;
     ret = ipv4_store_daddr(ctx, new_daddr, l3_off);
-    if (ret < 0) {
-        cilium_dbg(ctx, DBG_GENERIC, ret, 0);
+    if (ret < 0)
         return ret;
-    }
 
     diff = csum_diff4(old_daddr, new_daddr, ip4->check);
     ret = ipv4_store_check(ctx, (__sum16) diff, l3_off);
-    if (ret < 0) {
-        cilium_dbg(ctx, DBG_GENERIC, ret, 0);
+    if (ret < 0)
         return ret;
-    }
 
-    if (!revalidate_data(ctx, &data, &data_end))
-        return DROP_INVALID;
-
-    udp = (struct udphdr *)((char *)data + l3_off + sizeof(*ip4));
-    if ((char *)udp + sizeof(*udp) > (char *)data_end)
+    if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                (void **)&udp, l3_off + sizeof(*ip4),
+                                sizeof(*udp), false))
         return DROP_INVALID;
 
     if (udp->check != 0) {
         diff = csum_diff4(old_daddr, new_daddr, udp->check);
         ret = bpf_l4_csum_replace(ctx,
-                                  l3_off + sizeof(*ip4) + offsetof(struct udphdr, check),
+                                  l3_off + sizeof(*ip4) +
+                                  offsetof(struct udphdr, check),
                                   (unsigned long)old_daddr,
                                   (unsigned long)new_daddr,
                                   sizeof(udp->check));
-        if (ret < 0) {
-            cilium_dbg(ctx, DBG_GENERIC, ret, 0);
+        if (ret < 0)
             return ret;
-        }
     }
 
     ret = eth_store_daddr(ctx, backend->mac, 0);
-    if (ret < 0) {
-        cilium_dbg(ctx, DBG_GENERIC, ret, 0);
+    if (ret < 0)
         return ret;
-    }
 
     return 0;
 }
 
-static __always_inline int
-handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
+static __always_inline int handle_udp_9000_mirroring(struct __ctx_buff *ctx,
+                                                     __u32 l3_off)
 {
     void *data, *data_end;
     struct iphdr *ip4;
     struct udphdr *udp;
-    struct dup_backends_key   key;
+    struct dup_backends_key key;
     struct dup_backends_value *backend;
     int ret;
 
-    if (!revalidate_data(ctx, &data, &data_end))
+    if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                (void **)&ip4, l3_off,
+                                sizeof(*ip4), false))
         return DROP_INVALID;
 
-    ip4 = (struct iphdr *)((char *)data + l3_off);
     if ((void *)ip4 + sizeof(*ip4) > data_end)
         return DROP_INVALID;
 
     if (ip4->protocol != IPPROTO_UDP)
         return TC_ACT_OK;
 
-    udp = (struct udphdr *)((char *)data + l3_off + (ip4->ihl * 4));
-    if ((char *)udp + sizeof(*udp) > (char *)data_end)
+    if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                (void **)&udp, l3_off + (ip4->ihl * 4),
+                                sizeof(*udp), false))
         return DROP_INVALID;
 
     #define UDP_PORT_9000 9000
     if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
         return TC_ACT_OK;
 
-    cilium_dbg3(ctx, DBG_GENERIC,
-                UDP_PORT_9000,
-                bpf_ntohs(udp->source),
-                bpf_ntohs(udp->dest));
-
     key.idx = 0;
     backend = map_lookup_elem(&dup_backends, &key);
     if (backend) {
-        cilium_dbg3(ctx, DBG_GENERIC, 1, backend->ifindex, backend->ip);
         ret = bpf_clone_redirect(ctx, backend->ifindex, BPF_F_INGRESS);
         if (ret < 0)
             cilium_dbg3(ctx, DBG_GENERIC, 2, backend->ifindex, ret);
-    } else {
-        cilium_dbg(ctx, DBG_GENERIC, 3, 0);
     }
 
     key.idx = 1;
     backend = map_lookup_elem(&dup_backends, &key);
     if (backend) {
-        cilium_dbg3(ctx, DBG_GENERIC, 4, backend->ifindex, backend->ip);
         ret = rewrite_packet_headers(ctx, backend, l3_off);
-        if (ret < 0) {
-            cilium_dbg3(ctx, DBG_GENERIC, 5, ret, 0);
+        if (ret < 0)
             return TC_ACT_OK;
-        }
         return bpf_redirect(ctx, backend->ifindex, BPF_F_INGRESS);
-    } else {
-        cilium_dbg(ctx, DBG_GENERIC, 6, 1);
     }
 
     return TC_ACT_OK;
