@@ -68,6 +68,13 @@
                  _s, _d);                                                     \
 } while (0)
 
+#define bpf_skb_store_bytes   __builtin_bpf_skb_store_bytes
+#define bpf_l3_csum_replace   __builtin_bpf_l3_csum_replace
+#define bpf_l4_csum_replace   __builtin_bpf_l4_csum_replace
+#define bpf_csum_diff         __builtin_bpf_csum_diff
+#define bpf_clone_redirect    __builtin_bpf_clone_redirect
+#define bpf_redirect          __builtin_bpf_redirect
+
 static __always_inline int rewrite_packet_headers(struct __ctx_buff *ctx,
                                                   struct dup_backends_value *backend,
                                                   __u32 l3_off)
@@ -1039,7 +1046,7 @@ static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx, __u32 *d
 		udp = (struct udphdr *)((char *)ip4 + sizeof(struct iphdr));
 		if ((char *)udp + sizeof(struct udphdr) <= data_end) {
 			/* Handle UDP port 9000 mirroring */
-			ret = handle_udp_9000_mirroring(ctx, ip4, udp, l3_off);
+			ret = handle_udp_9000_mirroring(ctx, l3_off);
 			if (ret != TC_ACT_OK)
 				return ret;
 		}
