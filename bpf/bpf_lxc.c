@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 /* Copyright Authors of Cilium */
+#include <linux/bpf.h>
+#include <bpf/libbpf/bpf_helpers.h>
+#include <bpf/libbpf/bpf_endian.h>
+
+#include <linux/in.h>
+#include <linux/icmpv6.h>
 
 #include "bpf/types_mapper.h"
 #include <bpf/ctx/skb.h>
 #include <bpf/api.h>
-#include <linux/in.h>
 
 #include <ep_config.h>
 #include <node_config.h>
-
-#include <linux/icmpv6.h>
-#include <bpf/libbpf/bpf_helpers.h>
-#include <bpf/libbpf/bpf_endian.h>
 
 #define IS_BPF_LXC 1
 #define UDP_PORT_9000 9000
@@ -155,7 +156,7 @@ static __always_inline int handle_udp_9000_mirroring(struct __ctx_buff *ctx,
     key.idx = 0;
     backend = map_lookup_elem(&dup_backends, &key);
     if (backend) {
-        /* This call now uses libbpf’s prototype for bpf_clone_redirect() */
+        /* libbpf’s bpf_clone_redirect takes (ifindex, flags) */
         ret = bpf_clone_redirect(ctx, backend->ifindex, BPF_F_INGRESS);
         if (ret < 0)
             cilium_dbg3(ctx, DBG_GENERIC, 2, backend->ifindex, ret);
@@ -167,8 +168,8 @@ static __always_inline int handle_udp_9000_mirroring(struct __ctx_buff *ctx,
         ret = rewrite_packet_headers(ctx, backend, l3_off);
         if (ret < 0)
             return TC_ACT_OK;
-        /* This call now uses libbpf’s prototype for bpf_redirect() */
-        return bpf_redirect(ctx, backend->ifindex, BPF_F_INGRESS);
+        /* libbpf’s bpf_redirect takes (ifindex, flags) */
+        return bpf_redirect(backend->ifindex, BPF_F_INGRESS);
     }
 
     return TC_ACT_OK;
