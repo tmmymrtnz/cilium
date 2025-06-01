@@ -1016,7 +1016,6 @@ static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx, __u32 *d
 #endif
 	void *data, *data_end;
 	struct iphdr *ip4;
-	struct udphdr *udp;  /* ADD THIS DECLARATION */
 	int ret, verdict, l4_off;
 	__u32 l3_off = ETH_HLEN;  /* ADD THIS DECLARATION */
 	struct trace_ctx trace = {

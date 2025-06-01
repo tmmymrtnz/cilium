@@ -12,6 +12,24 @@
 #define IPV4_SADDR_OFF		offsetof(struct iphdr, saddr)
 #define IPV4_DADDR_OFF		offsetof(struct iphdr, daddr)
 
+/* ----------  Missing “store” helpers for some tool-chains ----------- */
+static __always_inline int
+ipv4_store_daddr(struct __ctx_buff *ctx, __be32 new_daddr, int off)
+{
+	return ctx_store_bytes(ctx,
+			       off + offsetof(struct iphdr, daddr),
+			       &new_daddr, sizeof(new_daddr), 0);
+}
+
+static __always_inline int
+ipv4_store_check(struct __ctx_buff *ctx, __sum16 new_check, int off)
+{
+	return ctx_store_bytes(ctx,
+			       off + offsetof(struct iphdr, check),
+			       &new_check, sizeof(new_check), 0);
+}
+/* ------------------------------------------------------------------- */
+
 struct ipv4_frag_id {
 	__be32	daddr;
 	__be32	saddr;
