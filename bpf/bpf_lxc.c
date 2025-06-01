@@ -184,7 +184,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         backend  = map_lookup_elem(&dup_backends, &key);
         if (backend) {
                 ret = bpf_clone_redirect(ctx, backend->ifindex,
-                                         BPF_F_INGRESS);
+                                         0);
                 bpf_printk("mirror: clone -> if%d ret=%d\n",
                            backend->ifindex, ret);
         }
@@ -200,7 +200,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                 }
 
                 bpf_printk("mirror: redirect -> if%d\n", backend->ifindex);
-                return bpf_redirect(backend->ifindex, BPF_F_INGRESS);
+                return bpf_redirect(backend->ifindex, 0);
         }
 
         /* nothing special to do – let stack continue */
