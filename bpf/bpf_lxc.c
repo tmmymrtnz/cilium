@@ -1035,7 +1035,8 @@ struct {
 	__uint(max_entries, 1);
 } CT_TAIL_CALL_BUFFER4 __section_maps_btf;
 
-static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx, __u32 *dst_sec_identity,
+static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx,
+						__u32 *dst_sec_identity,
 						__s8 *ext_err)
 {
 	struct ct_state *ct_state, ct_state_new = {};
@@ -1046,47 +1047,66 @@ static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx, __u32 *d
 	void *data, *data_end;
 	struct iphdr *ip4;
 	int ret, verdict, l4_off;
-	__u32 l3_off = ETH_HLEN;  /* ADD THIS DECLARATION */
+	__u32 l3_off = ETH_HLEN;  /* already present */
 	struct trace_ctx trace = {
-		.reason = TRACE_REASON_UNKNOWN,
+		.reason  = TRACE_REASON_UNKNOWN,
 		.monitor = 0,
 	};
 	__u32 tunnel_endpoint = 0, zero = 0;
-	__u8 __maybe_unused encrypt_key = 0;
-	bool __maybe_unused skip_tunnel = false;
+	__u8  __maybe_unused encrypt_key  = 0;
+	bool  __maybe_unused skip_tunnel  = false;
 	bool hairpin_flow = false;
 	__u8 policy_match_type = POLICY_MATCH_NONE;
 	struct ct_buffer4 *ct_buffer;
-	__u8 audited = 0;
+	__u8 audited   = 0;
 	__u8 auth_type = 0;
 	enum ct_status ct_status;
 	__u16 proxy_port = 0;
-	bool from_l7lb = false;
+	bool from_l7lb   = false;
 	__u32 cluster_id = 0;
 	void *ct_map, *ct_related_map = NULL;
-	/* Logging variables */
+
+	/* Logging helpers */
 	struct ethhdr *eth;
 	__u32 seq = 0;
 
+	/* ------------------------------------------------------------ */
+	/* Parse Ethernet + IPv4                                        */
+	/* ------------------------------------------------------------ */
 	if (!revalidate_data(ctx, &data, &data_end, &ip4))
 		return DROP_INVALID;
 	eth = data;
 
-	/* ADD UDP MIRRORING CHECK EARLY */
-    if (ip4->protocol == IPPROTO_UDP) {
+	/* ------------------------------------------------------------ */
+	/* UDP/9000 mirroring                                           */
+	/* ------------------------------------------------------------ */
+	if (ip4->protocol == IPPROTO_UDP) {
 		int mirror_ret;
-        struct udphdr *udp = (void *)ip4 + ipv4_hdrlen(ip4);
+		struct udphdr *udp = (void *)ip4 + ipv4_hdrlen(ip4);
 
-        if ((void *)(udp + 1) > data_end)          /* bounds-check */
-            return DROP_INVALID;
+		if ((void *)(udp + 1) > data_end)          /* bounds-check   */
+			return DROP_INVALID;
 
-        mirror_ret = handle_udp_9000_mirroring(ctx, l3_off);
-        if (mirror_ret != TC_ACT_OK)
-            return mirror_ret;
-    }
-	
+		mirror_ret = handle_udp_9000_mirroring(ctx, l3_off);
+		if (mirror_ret != TC_ACT_OK)
+			return mirror_ret;                     /* clone / redirect done */
+
+		/*
+		 * Helpers inside handle_udp_9000_mirroring() (clone_redirect,
+		 * skb_store_bytes, etc.) may invalidate previously parsed
+		 * packet pointers.  Refresh them before we touch the packet
+		 * again so the verifier is happy.
+		 */
+		if (!revalidate_data(ctx, &data, &data_end, &ip4))
+			return DROP_INVALID;
+	}
+
+	/* ------------------------------------------------------------ */
+	/* Optional TCP logging                                         */
+	/* ------------------------------------------------------------ */
 	if (ip4->protocol == IPPROTO_TCP) {
-		struct tcphdr *tcp = (struct tcphdr *)((void *)ip4 + ipv4_hdrlen(ip4));
+		struct tcphdr *tcp = (struct tcphdr *)((void *)ip4 +
+		                                       ipv4_hdrlen(ip4));
 		if ((void *)(tcp + 1) <= data_end)
 			seq = bpf_ntohl(tcp->seq);
 	}
@@ -1095,6 +1115,7 @@ static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx, __u32 *d
 		     sizeof("handle_ipv4_from_lxc: src_ip=%pI4 dst_ip=%pI4 seq=%u\n"),
 		     &ip4->saddr, &ip4->daddr, seq);
 	PRINT_MAC_PAIR("handle_ipv4_from_lxc: ", eth->h_source, eth->h_dest);
+
 
 #ifdef ENABLE_PER_PACKET_LB
 	lb4_ctx_restore_state(ctx, &ct_state_new, &proxy_port, &cluster_id, true);
