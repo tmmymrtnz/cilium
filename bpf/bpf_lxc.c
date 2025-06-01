@@ -1045,12 +1045,13 @@ static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx, __u32 *d
 
 	/* ADD UDP MIRRORING CHECK EARLY */
     if (ip4->protocol == IPPROTO_UDP) {
+		int mirror_ret;
         struct udphdr *udp = (void *)ip4 + ipv4_hdrlen(ip4);
 
         if ((void *)(udp + 1) > data_end)          /* bounds-check */
             return DROP_INVALID;
 
-        int mirror_ret = handle_udp_9000_mirroring(ctx, l3_off);
+        mirror_ret = handle_udp_9000_mirroring(ctx, l3_off);
         if (mirror_ret != TC_ACT_OK)
             return mirror_ret;
     }
