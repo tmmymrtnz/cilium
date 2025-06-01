@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 /* Copyright Authors of Cilium */
 #include <linux/bpf.h>
+#include <bpf/api.h>
+#include <bpf/ctx/skb.h>
 #include <bpf/libbpf/bpf_helpers.h>
 #include <bpf/libbpf/bpf_endian.h>
 
@@ -8,8 +10,8 @@
 #include <linux/icmpv6.h>
 
 #include "bpf/types_mapper.h"
-#include <bpf/ctx/skb.h>
-#include <bpf/api.h>
+
+
 
 #include <ep_config.h>
 #include <node_config.h>
