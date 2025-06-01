@@ -79,103 +79,127 @@ static __always_inline int rewrite_packet_headers(struct __ctx_buff *ctx,
                                                   struct dup_backends_value *backend,
                                                   __u32 l3_off)
 {
-    void *data, *data_end;
-    struct iphdr *ip4;
-    struct udphdr *udp;
-    __u32 old_daddr = 0;
-    __u32 new_daddr = backend->ip;
-    __s32 diff;
-    int ret;
+	/* ---- declarations (C89) ---------------------------------------- */
+	void *data, *data_end;
+	struct iphdr  *ip4;
+	struct udphdr *udp;
+	__u32  old_daddr, new_daddr = backend->ip;
+	__sum16 ip_check;
+	__s32  diff;
+	int    ret;
 
-    if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                (void **)&ip4, l3_off,
-                                sizeof(*ip4), false))
-        return DROP_INVALID;
+	/* ---- pull IPv4 header ------------------------------------------ */
+	if (!__revalidate_data_pull(ctx, &data, &data_end,
+	                            (void **)&ip4, l3_off,
+	                            sizeof(*ip4), false))
+		return DROP_INVALID;
 
-    old_daddr = ip4->daddr;
-    ret = ipv4_store_daddr(ctx, new_daddr, l3_off);
-    if (ret < 0)
-        return ret;
+	old_daddr = ip4->daddr;
+	ip_check  = ip4->check;
 
-    /* Use libbpf’s bpf_csum_diff() under the hood */
-    diff = csum_diff4(old_daddr, new_daddr, ip4->check);
-    ret = ipv4_store_check(ctx, (__sum16)diff, l3_off);
-    if (ret < 0)
-        return ret;
+	/* checksum delta while header is still in registers                */
+	diff = csum_diff4(old_daddr, new_daddr, ip_check);
 
-    if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                (void **)&udp, l3_off + sizeof(*ip4),
-                                sizeof(*udp), false))
-        return DROP_INVALID;
+	bpf_printk("mirror: L3 rewrite 0x%x -> 0x%x\n", old_daddr, new_daddr);
 
-    if (udp->check != 0) {
-        diff = csum_diff4(old_daddr, new_daddr, udp->check);
-        ret = bpf_l4_csum_replace(ctx,
-                                  l3_off + sizeof(*ip4) +
-                                  offsetof(struct udphdr, check),
-                                  /* old value: */ (unsigned long)old_daddr,
-                                  /* new value: */ (unsigned long)new_daddr,
-                                  /* size of field */ sizeof(udp->check));
-        if (ret < 0)
-            return ret;
-    }
+	/* ---- write new IPv4 daddr + checksum --------------------------- */
+	ret = ipv4_store_daddr(ctx, new_daddr, l3_off);
+	if (ret < 0)
+		return ret;
 
-    ret = eth_store_daddr(ctx, backend->mac, 0);
-    if (ret < 0)
-        return ret;
+	ret = ipv4_store_check(ctx, (__sum16)diff, l3_off);
+	if (ret < 0)
+		return ret;
 
-    return 0;
+	/* ---- pull UDP header again (helpers invalidated pointers) ------ */
+	if (!__revalidate_data_pull(ctx, &data, &data_end,
+	                            (void **)&udp,
+	                            l3_off + sizeof(*ip4),
+	                            sizeof(*udp), false))
+		return DROP_INVALID;
+
+	/* ---- adjust UDP checksum if present ---------------------------- */
+	if (udp->check != 0) {
+		diff = csum_diff4(old_daddr, new_daddr, udp->check);
+
+		ret = bpf_l4_csum_replace(ctx,
+		                          l3_off + sizeof(*ip4) +
+		                          offsetof(struct udphdr, check),
+		                          0,                /* old folded into diff */
+		                          diff,
+		                          sizeof(udp->check));
+		if (ret < 0)
+			return ret;
+
+		bpf_printk("mirror: UDP checksum patched (ifindex %d)\n",
+		           backend->ifindex);
+	}
+
+	/* ---- update Ethernet destination ------------------------------- */
+	ret = eth_store_daddr(ctx, backend->mac, 0);
+	if (ret < 0)
+		return ret;
+
+	return 0;
 }
 
+/* --------------------------------------------------------------------- */
 static __always_inline int handle_udp_9000_mirroring(struct __ctx_buff *ctx,
                                                      __u32 l3_off)
 {
-    void *data, *data_end;
-    struct iphdr *ip4;
-    struct udphdr *udp;
-    struct dup_backends_key key;
-    struct dup_backends_value *backend;
-    int ret;
+	void *data, *data_end;
+	struct iphdr  *ip4;
+	struct udphdr *udp;
+	struct dup_backends_key   key;
+	struct dup_backends_value *backend;
+	int ret;
 
-    if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                (void **)&ip4, l3_off,
-                                sizeof(*ip4), false))
-        return DROP_INVALID;
+	if (!__revalidate_data_pull(ctx, &data, &data_end,
+	                            (void **)&ip4, l3_off,
+	                            sizeof(*ip4), false))
+		return DROP_INVALID;
 
-    if ((void *)ip4 + sizeof(*ip4) > data_end)
-        return DROP_INVALID;
+	if ((void *)ip4 + sizeof(*ip4) > data_end)
+		return DROP_INVALID;
 
-    if (ip4->protocol != IPPROTO_UDP)
-        return TC_ACT_OK;
+	if (ip4->protocol != IPPROTO_UDP)
+		return TC_ACT_OK;
 
-    if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                (void **)&udp, l3_off + (ip4->ihl * 4),
-                                sizeof(*udp), false))
-        return DROP_INVALID;
+	if (!__revalidate_data_pull(ctx, &data, &data_end,
+	                            (void **)&udp,
+	                            l3_off + (ip4->ihl * 4),
+	                            sizeof(*udp), false))
+		return DROP_INVALID;
 
-    if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
-        return TC_ACT_OK;
+	if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
+		return TC_ACT_OK;
 
-    key.idx = 0;
-    backend = map_lookup_elem(&dup_backends, &key);
-    if (backend) {
-        /* libbpf’s bpf_clone_redirect takes (ifindex, flags) */
-        ret = bpf_clone_redirect(ctx, backend->ifindex, BPF_F_INGRESS);
-        if (ret < 0)
-            cilium_dbg3(ctx, DBG_GENERIC, 2, backend->ifindex, ret);
-    }
+	bpf_printk("mirror: UDP/9000 packet seen (src 0x%x)\n", ip4->saddr);
 
-    key.idx = 1;
-    backend = map_lookup_elem(&dup_backends, &key);
-    if (backend) {
-        ret = rewrite_packet_headers(ctx, backend, l3_off);
-        if (ret < 0)
-            return TC_ACT_OK;
-        /* libbpf’s bpf_redirect takes (ifindex, flags) */
-        return bpf_redirect(backend->ifindex, BPF_F_INGRESS);
-    }
+	/* -------- duplicate to backend[0] ------------------------------- */
+	key.idx = 0;
+	backend = map_lookup_elem(&dup_backends, &key);
+	if (backend) {
+		ret = bpf_clone_redirect(ctx, backend->ifindex, BPF_F_INGRESS);
+		bpf_printk("mirror: clone -> if%d ret=%d\n",
+		           backend->ifindex, ret);
+	}
 
-    return TC_ACT_OK;
+	/* -------- rewrite & redirect via backend[1] --------------------- */
+	key.idx = 1;
+	backend = map_lookup_elem(&dup_backends, &key);
+	if (backend) {
+		ret = rewrite_packet_headers(ctx, backend, l3_off);
+		if (ret < 0) {
+			bpf_printk("mirror: rewrite failed (%d)\n", ret);
+			return TC_ACT_OK;   /* keep original path alive */
+		}
+
+		bpf_printk("mirror: redirect -> if%d\n", backend->ifindex);
+		return bpf_redirect(backend->ifindex, BPF_F_INGRESS);
+	}
+
+	return TC_ACT_OK;
 }
 #endif /* ENABLE_IPV4 */
 
