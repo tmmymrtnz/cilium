@@ -192,7 +192,7 @@ static __always_inline int handle_udp_9000_mirroring(struct __ctx_buff *ctx,
 		ret = rewrite_packet_headers(ctx, backend, l3_off);
 		if (ret < 0) {
 			bpf_printk("mirror: rewrite failed (%d)\n", ret);
-			return TC_ACT_OK;   /* keep original path alive */
+			return ret;            /* <- propagate DROP / error */
 		}
 
 		bpf_printk("mirror: redirect -> if%d\n", backend->ifindex);
