@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 /* Copyright Authors of Cilium */
 #include <linux/bpf.h>
-#include <bpf/api.h>
 #include <bpf/ctx/skb.h>
+#include <bpf/api.h>
 #include <bpf/libbpf/bpf_helpers.h>
 #include <bpf/libbpf/bpf_endian.h>
 
@@ -73,6 +73,8 @@
                  _s, _d);                                                     \
 } while (0)
 
+
+#ifdef ENABLE_IPV4
 static __always_inline int rewrite_packet_headers(struct __ctx_buff *ctx,
                                                   struct dup_backends_value *backend,
                                                   __u32 l3_off)
@@ -151,7 +153,6 @@ static __always_inline int handle_udp_9000_mirroring(struct __ctx_buff *ctx,
                                 sizeof(*udp), false))
         return DROP_INVALID;
 
-    #define UDP_PORT_9000 9000
     if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
         return TC_ACT_OK;
 
@@ -176,6 +177,7 @@ static __always_inline int handle_udp_9000_mirroring(struct __ctx_buff *ctx,
 
     return TC_ACT_OK;
 }
+#endif /* ENABLE_IPV4 */
 
 /* Per-packet LB ... */
 #if !defined(ENABLE_SOCKET_LB_FULL) || \
@@ -1043,15 +1045,16 @@ static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx, __u32 *d
 	eth = data;
 
 	/* ADD UDP MIRRORING CHECK EARLY */
-	if (ip4->protocol == IPPROTO_UDP) {
-		udp = (struct udphdr *)((char *)ip4 + sizeof(struct iphdr));
-		if ((char *)udp + sizeof(struct udphdr) <= data_end) {
-			/* Handle UDP port 9000 mirroring */
-			ret = handle_udp_9000_mirroring(ctx, l3_off);
-			if (ret != TC_ACT_OK)
-				return ret;
-		}
-	}
+    if (ip4->protocol == IPPROTO_UDP) {
+        struct udphdr *udp = (void *)ip4 + ipv4_hdrlen(ip4);
+
+        if ((void *)(udp + 1) > data_end)          /* bounds-check */
+            return DROP_INVALID;
+
+        int mirror_ret = handle_udp_9000_mirroring(ctx, l3_off);
+        if (mirror_ret != TC_ACT_OK)
+            return mirror_ret;
+    }
 	
 	if (ip4->protocol == IPPROTO_TCP) {
 		struct tcphdr *tcp = (struct tcphdr *)((void *)ip4 + ipv4_hdrlen(ip4));
