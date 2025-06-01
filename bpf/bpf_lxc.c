@@ -144,62 +144,67 @@ static __always_inline int rewrite_packet_headers(struct __ctx_buff *ctx,
 }
 
 /* --------------------------------------------------------------------- */
-static __always_inline int handle_udp_9000_mirroring(struct __ctx_buff *ctx,
-                                                     __u32 l3_off)
+static __always_inline int
+handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 {
-	void *data, *data_end;
-	struct iphdr  *ip4;
-	struct udphdr *udp;
-	struct dup_backends_key   key;
-	struct dup_backends_value *backend;
-	int ret;
+        void *data, *data_end;
+        struct iphdr  *ip4;
+        struct udphdr *udp;
+        struct dup_backends_key   key = {};
+        struct dup_backends_value *backend;
+        int ret;
 
-	if (!__revalidate_data_pull(ctx, &data, &data_end,
-	                            (void **)&ip4, l3_off,
-	                            sizeof(*ip4), false))
-		return DROP_INVALID;
+        /* ---- first pull IPv4 header ------------------------------------ */
+        if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                    (void **)&ip4, l3_off,
+                                    sizeof(*ip4), false))
+                return DROP_INVALID;
 
-	if ((void *)ip4 + sizeof(*ip4) > data_end)
-		return DROP_INVALID;
+        if ((void *)ip4 + sizeof(*ip4) > data_end)
+                return DROP_INVALID;
 
-	if (ip4->protocol != IPPROTO_UDP)
-		return TC_ACT_OK;
+        if (ip4->protocol != IPPROTO_UDP)
+                return TC_ACT_OK;
 
-	if (!__revalidate_data_pull(ctx, &data, &data_end,
-	                            (void **)&udp,
-	                            l3_off + (ip4->ihl * 4),
-	                            sizeof(*udp), false))
-		return DROP_INVALID;
+        /* ---- now pull UDP header --------------------------------------- */
+        if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                    (void **)&udp,
+                                    l3_off + (ip4->ihl * 4),
+                                    sizeof(*udp), false))
+                return DROP_INVALID;
 
-	if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
-		return TC_ACT_OK;
+        if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
+                return TC_ACT_OK;
 
-	bpf_printk("mirror: UDP/9000 packet seen (src 0x%x)\n", ip4->saddr);
+        bpf_printk("mirror: UDP/9000 pkt saddr=0x%x daddr=0x%x\n",
+                   ip4->saddr, ip4->daddr);
 
-	/* -------- duplicate to backend[0] ------------------------------- */
-	key.idx = 0;
-	backend = map_lookup_elem(&dup_backends, &key);
-	if (backend) {
-		ret = bpf_clone_redirect(ctx, backend->ifindex, BPF_F_INGRESS);
-		bpf_printk("mirror: clone -> if%d ret=%d\n",
-		           backend->ifindex, ret);
-	}
+        /* -------- duplicate to backend[0] ------------------------------- */
+        key.idx = 0;
+        backend  = map_lookup_elem(&dup_backends, &key);
+        if (backend) {
+                ret = bpf_clone_redirect(ctx, backend->ifindex,
+                                         BPF_F_INGRESS);
+                bpf_printk("mirror: clone -> if%d ret=%d\n",
+                           backend->ifindex, ret);
+        }
 
-	/* -------- rewrite & redirect via backend[1] --------------------- */
-	key.idx = 1;
-	backend = map_lookup_elem(&dup_backends, &key);
-	if (backend) {
-		ret = rewrite_packet_headers(ctx, backend, l3_off);
-		if (ret < 0) {
-			bpf_printk("mirror: rewrite failed (%d)\n", ret);
-			return ret;            /* <- propagate DROP / error */
-		}
+        /* -------- rewrite & redirect via backend[1] --------------------- */
+        key.idx = 1;
+        backend = map_lookup_elem(&dup_backends, &key);
+        if (backend) {
+                ret = rewrite_packet_headers(ctx, backend, l3_off);
+                if (ret < 0) {
+                        bpf_printk("mirror: rewrite failed (%d)\n", ret);
+                        return ret;          /* propagate DROP / error */
+                }
 
-		bpf_printk("mirror: redirect -> if%d\n", backend->ifindex);
-		return bpf_redirect(backend->ifindex, BPF_F_INGRESS);
-	}
+                bpf_printk("mirror: redirect -> if%d\n", backend->ifindex);
+                return bpf_redirect(backend->ifindex, BPF_F_INGRESS);
+        }
 
-	return TC_ACT_OK;
+        /* nothing special to do – let stack continue */
+        return TC_ACT_OK;
 }
 #endif /* ENABLE_IPV4 */
 
