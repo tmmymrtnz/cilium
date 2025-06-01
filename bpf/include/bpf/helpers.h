@@ -5,6 +5,10 @@
 
 #include <linux/bpf.h>
 
+#include <bpf/libbpf/bpf_helpers.h>
+#include <bpf/libbpf/bpf_endian.h>
+#include <bpf/libbpf/bpf_tracing.h>
+
 #include "ctx/ctx.h"
 #include "compiler.h"
 
