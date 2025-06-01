@@ -1099,6 +1099,7 @@ static __always_inline int handle_ipv4_from_lxc(struct __ctx_buff *ctx,
 		 */
 		if (!revalidate_data(ctx, &data, &data_end, &ip4))
 			return DROP_INVALID;
+		eth = data;
 	}
 
 	/* ------------------------------------------------------------ */
