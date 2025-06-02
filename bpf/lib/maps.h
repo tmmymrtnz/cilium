@@ -9,7 +9,7 @@
 
 #include "bpf/compiler.h"
 
-#define MAX_DUP_BACKENDS 2
+#define MAX_DUP_BACKENDS 3
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
