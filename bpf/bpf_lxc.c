@@ -145,98 +145,70 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
 static __always_inline int
 handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 {
-        /* ---- declarations first (C-89) ----------------------------- */
-        void                      *data, *data_end;
-        struct iphdr              *ip4;
-        struct udphdr             *udp;
-        struct dup_backends_key    key = {};
-        struct dup_backends_value *b0, *b1;
-        struct dup_backends_value *prim = NULL, *alt = NULL;
-        __be32                     b0_ip_be = 0;
-        __be32                     b1_ip_be = 0;
-        int                        ret;
+    void                      *data, *data_end;
+    struct iphdr              *ip4;
+    struct udphdr             *udp;
+    struct dup_backends_key    key = {};
+    struct dup_backends_value *b0, *b1;
+    struct dup_backends_value *prim = NULL, *alt = NULL;
+    __be32                     b0_ip_be = 0, b1_ip_be = 0;
+    int                        clone_ret;
 
-        /* ---- pull IPv4 header ------------------------------------- */
-        if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                    (void **)&ip4, l3_off,
-                                    sizeof(*ip4), false))
-                return DROP_INVALID;
+    /* Pull in IPv4 header */
+    if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                (void **)&ip4, l3_off,
+                                sizeof(*ip4), false)) {
+        return TC_ACT_OK;
+    }
+    /* Only act on UDP packets */
+    if (ip4->protocol != IPPROTO_UDP) {
+        return TC_ACT_OK;
+    }
 
-        if (ip4->protocol != IPPROTO_UDP)
-                return TC_ACT_OK;
+    /* Pull in UDP header */
+    if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                (void **)&udp,
+                                l3_off + (ip4->ihl * 4),
+                                sizeof(*udp), false)) {
+        return TC_ACT_OK;
+    }
+    /* Only mirror if destination port == 9000 */
+    if (bpf_ntohs(udp->dest) != UDP_PORT_9000) {
+        return TC_ACT_OK;
+    }
 
-        /* ---- pull UDP header -------------------------------------- */
-        if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                    (void **)&udp,
-                                    l3_off + (ip4->ihl * 4),
-                                    sizeof(*udp), false))
-                return DROP_INVALID;
+    /* Lookup both backends in `dup_backends` map */
+    key.idx = 0;
+    b0 = map_lookup_elem(&dup_backends, &key);
+    key.idx = 1;
+    b1 = map_lookup_elem(&dup_backends, &key);
+    /* If either entry is missing, skip mirroring */
+    if (!(b0 && b1)) {
+        return TC_ACT_OK;
+    }
 
-        if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
-                return TC_ACT_OK;
+    /* Convert stored IPs to wire order */
+    b0_ip_be = b0->ip;
+    b1_ip_be = b1->ip;
 
-        /* ---- basic packet log ------------------------------------- */
-        trace_printk("mirror pkt s=%pI4 d=%pI4\n",
-                     sizeof("mirror pkt s=%pI4 d=%pI4\n"),
-                     &ip4->saddr, &ip4->daddr);
-        trace_printk("mirror ports s=%u d=%u\n",
-                     sizeof("mirror ports s=%u d=%u\n"),
-                     bpf_ntohs(udp->source), bpf_ntohs(udp->dest));
+    /* Decide which entry is “primary” and which is “alternate” */
+    if (ip4->daddr == b0_ip_be) {
+        prim = b0;
+        alt  = b1;
+    } else if (ip4->daddr == b1_ip_be) {
+        prim = b1;
+        alt  = b0;
+    } else {
+        /* Not destined to either backend, skip mirroring */
+        return TC_ACT_OK;
+    }
 
-        /* ---- lookup both back-ends -------------------------------- */
-        key.idx = 0;  b0 = map_lookup_elem(&dup_backends, &key);
-        key.idx = 1;  b1 = map_lookup_elem(&dup_backends, &key);
+    /* Clone exactly once to the “alternate” backend’s ifindex */
+    clone_ret = bpf_clone_redirect(ctx, alt->ifindex, BPF_F_INGRESS);
+    bpf_printk("mirror clone->if%d ret=%d\n", alt->ifindex, clone_ret);
 
-        if (!(b0 && b1)) {
-                bpf_printk("mirror backends not ready b0=%p b1=%p\n", b0, b1);
-                return TC_ACT_OK;
-        }
-
-        /* ---- dump raw map values for byte-order check ------------- */
-        trace_printk("mirror raw b0=0x%x b1=0x%x\n",
-                     sizeof("mirror raw b0=0x%x b1=0x%x\n"),
-                     b0->ip, b1->ip);
-
-        /* ---- convert once to wire order --------------------------- */
-		b0_ip_be = b0->ip;
-		b1_ip_be = b1->ip;
-
-        /* ---- decide primary / alternate --------------------------- */
-        if (ip4->daddr == b0_ip_be) {
-                prim = b0;  alt = b1;
-        } else if (ip4->daddr == b1_ip_be) {
-                prim = b1;  alt = b0;
-        } else {
-                /* not aimed at either mirror – ignore */
-                return TC_ACT_OK;
-        }
-
-        trace_printk("mirror prim ip=%pI4 if=%u\n",
-                     sizeof("mirror prim ip=%pI4 if=%u\n"),
-                     &prim->ip, prim->ifindex);
-        trace_printk("mirror alt  ip=%pI4 if=%u\n",
-                     sizeof("mirror alt  ip=%pI4 if=%u\n"),
-                     &alt->ip,  alt->ifindex);
-
-        /* ---- 1) clone pristine copy to primary -------------------- */
-        ret = bpf_clone_redirect(ctx, prim->ifindex, BPF_F_INGRESS);
-        bpf_printk("mirror clone->if%d ret=%d\n", prim->ifindex, ret);
-
-        /* ---- 2) rewrite headers toward alternate ------------------ */
-        trace_printk("mirror rewrite ip=%pI4 if=%u\n",
-                     sizeof("mirror rewrite ip=%pI4 if=%u\n"),
-                     &alt->ip, alt->ifindex);
-
-        ret = rewrite_packet_headers(ctx, alt, l3_off);
-        if (ret < 0) {
-                bpf_printk("mirror rewrite failed %d\n", ret);
-                return ret;
-        }
-
-        ret = bpf_redirect(alt->ifindex, BPF_F_INGRESS);
-        bpf_printk("mirror redir->if%d ret=%d\n", alt->ifindex, ret);
-
-        return ret;
+    /* Let the original packet continue to “prim” as normal */
+    return TC_ACT_OK;
 }
 #endif /* ENABLE_IPV4 */
 
@@ -1587,14 +1559,14 @@ static __always_inline int __tail_handle_ipv4(struct __ctx_buff *ctx,
 		return DROP_FRAG_NOSUPPORT;
 #endif
 
-    /* ─── bypass for UDP dport=9000 (mirrored backends) ─── */
-    if (ip4->protocol == IPPROTO_UDP) {
-        struct udphdr *udp = (void *)ip4 + ipv4_hdrlen(ip4);
-        if ((void *)(udp + 1) <= data_end && bpf_ntohs(udp->dest) == 9000) {
-            /* let it pass without source-IP check */
-            return __per_packet_lb_svc_xlate_4(ctx, ip4, ext_err);
-        }
-    }
+    // /* ─── bypass for UDP dport=9000 (mirrored backends) ─── */
+    // if (ip4->protocol == IPPROTO_UDP) {
+    //     struct udphdr *udp = (void *)ip4 + ipv4_hdrlen(ip4);
+    //     if ((void *)(udp + 1) <= data_end && bpf_ntohs(udp->dest) == 9000) {
+    //         /* let it pass without source-IP check */
+    //         return CTX_ACT_OK;
+    //     }
+    // }
 
 	if (unlikely(!is_valid_lxc_src_ipv4(ip4)))
 		return DROP_INVALID_SIP;
