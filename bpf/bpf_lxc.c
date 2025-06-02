@@ -135,13 +135,6 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
                 bpf_printk("mirror: UDP checksum patched (ifindex %d)\n",
                            backend->ifindex);
         }
-
-		struct bpf_ct_opts ct_opts = {
-            .l4proto = IPPROTO_UDP,
-            .flags   = BPF_F_CT_DIRECTION_EGRESS,
-        };
-        bpf_ct_reset4(ctx, &ct_opts);
-
         /* ---- rewrite Ethernet destination MAC ---------------------- */
         return eth_store_daddr(ctx, backend->mac, 0);   /* 0 on success */
 }
