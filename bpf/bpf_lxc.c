@@ -153,17 +153,15 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
     struct udphdr             *udp;
     struct dup_backends_key    key = {};
     struct dup_backends_value *b0, *b1, *b2;
-    struct dup_backends_value *prim = NULL, *alt = NULL;
     __be32                     b0_ip_be = 0;
-    __be32                     b1_ip_be = 0;
     int                        ret;
+    __u32                      ingress_if;
 
     /* ---- pull IPv4 header ------------------------------------- */
     if (!__revalidate_data_pull(ctx, &data, &data_end,
                                 (void **)&ip4, l3_off,
                                 sizeof(*ip4), false))
         return DROP_INVALID;
-
     if (ip4->protocol != IPPROTO_UDP)
         return TC_ACT_OK;
 
@@ -173,17 +171,8 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                                 l3_off + (ip4->ihl * 4),
                                 sizeof(*udp), false))
         return DROP_INVALID;
-
     if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
         return TC_ACT_OK;
-
-    /* ---- basic packet log ------------------------------------- */
-    trace_printk("mirror pkt s=%pI4 d=%pI4\n",
-                 sizeof("mirror pkt s=%pI4 d=%pI4\n"),
-                 &ip4->saddr, &ip4->daddr);
-    trace_printk("mirror ports s=%u d=%u\n",
-                 sizeof("mirror ports s=%u d=%u\n"),
-                 bpf_ntohs(udp->source), bpf_ntohs(udp->dest));
 
     /* ---- lookup back-ends at idx=0,1,2 ------------------------ */
     key.idx = 0;  b0 = map_lookup_elem(&dup_backends, &key);
@@ -195,6 +184,19 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         return TC_ACT_OK;
     }
 
+    /* ---- skip if packet arrived via pod-b[1] or pod-a (idx=1 or 2) ----- */
+    ingress_if = ctx->ingress_ifindex;
+    if (ingress_if == b1->ifindex || ingress_if == b2->ifindex)
+        return TC_ACT_OK;
+
+    /* ---- basic packet log ------------------------------------- */
+    trace_printk("mirror pkt s=%pI4 d=%pI4\n",
+                 sizeof("mirror pkt s=%pI4 d=%pI4\n"),
+                 &ip4->saddr, &ip4->daddr);
+    trace_printk("mirror ports s=%u d=%u\n",
+                 sizeof("mirror ports s=%u d=%u\n"),
+                 bpf_ntohs(udp->source), bpf_ntohs(udp->dest));
+
     /* ---- dump raw map values for byte-order check ------------- */
     trace_printk("mirror raw b0=0x%x b1=0x%x\n",
                  sizeof("mirror raw b0=0x%x b1=0x%x\n"),
@@ -202,52 +204,38 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 
     /* ---- convert once to wire order --------------------------- */
     b0_ip_be = b0->ip;
-    b1_ip_be = b1->ip;
 
-    /* ---- decide primary (pod-b) / alternate (pod-a idx=2) ------- */
-    if (ip4->daddr == b0_ip_be) {
-        prim = b0;
-        alt  = b2;  /* pod-a is idx=2 */
-    } else if (ip4->daddr == b1_ip_be) {
-        prim = b1;
-        alt  = b2;  /* pod-a is idx=2 */
-    } else {
-        /* not aimed at either pod-b backend – ignore */
+    /* ---- only mirror if destination is pod-b[0] -------------- */
+    if (ip4->daddr != b0_ip_be) {
+        /* let any packet to other addresses pass normally */
         return TC_ACT_OK;
     }
 
-    trace_printk("mirror prim ip=%pI4 if=%u\n",
-                 sizeof("mirror prim ip=%pI4 if=%u\n"),
-                 &prim->ip, prim->ifindex);
-    trace_printk("mirror alt  ip=%pI4 if=%u\n",
-                 sizeof("mirror alt  ip=%pI4 if=%u\n"),
-                 &alt->ip,  alt->ifindex);
-
-    /* ---- 1) rewrite “current” packet → pod-a (alt) ------------ */
-    trace_printk("mirror rewrite ip=%pI4 if=%u\n",
-                 sizeof("mirror rewrite ip=%pI4 if=%u\n"),
-                 &alt->ip, alt->ifindex);
-    ret = rewrite_packet_headers(ctx, alt, l3_off);
+    /* ---- 1) rewrite “current” packet → pod-b[1] (clone target) */
+    trace_printk("mirror rewrite→b1 ip=%pI4 if=%u\n",
+                 sizeof("mirror rewrite→b1 ip=%pI4 if=%u\n"),
+                 &b1->ip, b1->ifindex);
+    ret = rewrite_packet_headers(ctx, b1, l3_off);
     if (ret < 0) {
-        bpf_printk("mirror rewrite→alt failed %d\n", ret);
+        bpf_printk("mirror rewrite→b1 failed %d\n", ret);
         return ret;
     }
 
-    /* ---- 2) clone that rewritten packet to pod-a via egress ----- */
-    ret = bpf_clone_redirect(ctx, alt->ifindex, 0);
-    bpf_printk("mirror clone→if%d ret=%d\n", alt->ifindex, ret);
+    /* ---- 2) clone that rewritten packet to pod-b[1] via egress ----- */
+    ret = bpf_clone_redirect(ctx, b2->ifindex, BPF_F_EGRESS);
+    bpf_printk("mirror clone→b1 if%d ret=%d\n", b2->ifindex, ret);
 
-    /* ---- 3) restore “current” packet → primary (pod-b) --------- */
-    trace_printk("mirror restore ip=%pI4 if=%u\n",
-                 sizeof("mirror restore ip=%pI4 if=%u\n"),
-                 &prim->ip, prim->ifindex);
-    ret = rewrite_packet_headers(ctx, prim, l3_off);
+    /* ---- 3) restore “current” packet → pod-b[0] (original dest) */
+    trace_printk("mirror restore→b0 ip=%pI4 if=%u\n",
+                 sizeof("mirror restore→b0 ip=%pI4 if=%u\n"),
+                 &b0->ip, b0->ifindex);
+    ret = rewrite_packet_headers(ctx, b0, l3_off);
     if (ret < 0) {
-        bpf_printk("mirror restore→prim failed %d\n", ret);
+        bpf_printk("mirror restore→b0 failed %d\n", ret);
         return ret;
     }
 
-    /* ---- 4) let the original packet continue to primary -------- */
+    /* ---- 4) let the original packet continue to pod-b[0] -------- */
     return TC_ACT_OK;
 }
 #endif /* ENABLE_IPV4 */
