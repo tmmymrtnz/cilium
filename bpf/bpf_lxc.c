@@ -150,7 +150,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
     struct udphdr             *udp;
     struct dup_backends_key    key = {};
     struct dup_backends_value *b0, *b1;
-    struct dup_backends_value *prim = NULL, *alt = NULL;
+    struct dup_backends_value *alt = NULL;
     __be32                     b0_ip_be = 0, b1_ip_be = 0;
     int                        clone_ret;
 
@@ -177,7 +177,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         return TC_ACT_OK;
     }
 
-    /* Lookup both backends in `dup_backends` map */
+    /* Lookup both backends in dup_backends map */
     key.idx = 0;
     b0 = map_lookup_elem(&dup_backends, &key);
     key.idx = 1;
@@ -191,23 +191,21 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
     b0_ip_be = b0->ip;
     b1_ip_be = b1->ip;
 
-    /* Decide which entry is “primary” and which is “alternate” */
+    /* Determine the “alternate” backend:
+     * If packet is headed to b0, alt = b1; if to b1, alt = b0; else skip. */
     if (ip4->daddr == b0_ip_be) {
-        prim = b0;
-        alt  = b1;
+        alt = b1;
     } else if (ip4->daddr == b1_ip_be) {
-        prim = b1;
-        alt  = b0;
+        alt = b0;
     } else {
-        /* Not destined to either backend, skip mirroring */
         return TC_ACT_OK;
     }
 
-    /* Clone exactly once to the “alternate” backend’s ifindex */
+    /* Clone exactly once into the LOCAL tunnel ifindex for alt */
     clone_ret = bpf_clone_redirect(ctx, alt->ifindex, BPF_F_INGRESS);
     bpf_printk("mirror clone->if%d ret=%d\n", alt->ifindex, clone_ret);
 
-    /* Let the original packet continue to “prim” as normal */
+    /* Let the original packet continue to its original destination */
     return TC_ACT_OK;
 }
 #endif /* ENABLE_IPV4 */
