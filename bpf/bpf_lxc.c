@@ -136,6 +136,12 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
                            backend->ifindex);
         }
 
+		struct bpf_ct_opts ct_opts = {
+            .l4proto = IPPROTO_UDP,
+            .flags   = BPF_F_CT_DIRECTION_EGRESS,
+        };
+        bpf_ct_reset4(ctx, &ct_opts);
+
         /* ---- rewrite Ethernet destination MAC ---------------------- */
         return eth_store_daddr(ctx, backend->mac, 0);   /* 0 on success */
 }
@@ -1587,6 +1593,15 @@ static __always_inline int __tail_handle_ipv4(struct __ctx_buff *ctx,
 	if (ipv4_is_fragment(ip4))
 		return DROP_FRAG_NOSUPPORT;
 #endif
+
+    /* ─── bypass for UDP dport=9000 (mirrored backends) ─── */
+    if (ip4->protocol == IPPROTO_UDP) {
+        struct udphdr *udp = (void *)ip4 + ipv4_hdrlen(ip4);
+        if ((void *)(udp + 1) <= data_end && bpf_ntohs(udp->dest) == 9000) {
+            /* let it pass without source-IP check */
+            return __per_packet_lb_svc_xlate_4(ctx, ip4, ext_err);
+        }
+    }
 
 	if (unlikely(!is_valid_lxc_src_ipv4(ip4)))
 		return DROP_INVALID_SIP;
