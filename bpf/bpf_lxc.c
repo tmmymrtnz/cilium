@@ -86,7 +86,7 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
         void            *data, *data_end;
         struct iphdr    *ip4;
         struct udphdr   *udp;
-        __be32           new_daddr = bpf_htonl(backend->ip); /* map → wire */
+        __be32           new_daddr = backend->ip; /* map → wire */
         __be32           old_daddr;
         __sum16          ip_check;
         __s32            diff;
@@ -199,8 +199,8 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                      b0->ip, b1->ip);
 
         /* ---- convert once to wire order --------------------------- */
-        b0_ip_be = bpf_htonl(b0->ip);
-        b1_ip_be = bpf_htonl(b1->ip);
+		b0_ip_be = b0->ip;
+		b1_ip_be = b1->ip;
 
         /* ---- decide primary / alternate --------------------------- */
         if (ip4->daddr == b0_ip_be) {
