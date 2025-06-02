@@ -152,6 +152,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         struct udphdr *udp;
         struct dup_backends_key   key = {};
         struct dup_backends_value *b0, *b1, *alt = NULL;
+        __be32 dst_ip;
         int ret;
 
         /* ---- IPv4 header ---------------------------------------------- */
@@ -190,7 +191,6 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                 return TC_ACT_OK;
         }
 
-        /* ---------- DBG : table snapshot -------------------------------- */
         trace_printk("mirror b0 ip=%pI4 if=%u\n",
                      sizeof("mirror b0 ip=%pI4 if=%u\n"),
                      &b0->ip, b0->ifindex);
@@ -198,23 +198,26 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                      sizeof("mirror b1 ip=%pI4 if=%u\n"),
                      &b1->ip, b1->ifindex);
 
-        /* 1. Clone pristine copy to b0 ---------------------------------- */
-        ret = bpf_clone_redirect(ctx, b0->ifindex, BPF_F_INGRESS);
-        bpf_printk("mirror clone->if%d ret=%d\n", b0->ifindex, ret);
+        /* ---- choose alternate & clone pristine copy ------------------- */
+        dst_ip = ip4->daddr;              /* scalar copy – safe after helpers */
 
-        /* 2. Choose alternate backend ----------------------------------- */
-        if (ip4->daddr == b0->ip)
+        if (dst_ip == b0->ip)
                 alt = b1;
-        else if (ip4->daddr == b1->ip)
+        else if (dst_ip == b1->ip)
                 alt = b0;
 
         if (!alt) {
                 trace_printk("mirror alt unresolved d=%pI4\n",
                              sizeof("mirror alt unresolved d=%pI4\n"),
-                             &ip4->daddr);
+                             &dst_ip);
                 return TC_ACT_OK;
         }
 
+        /* 1. send untouched clone to b0 (load-balancer’s pick) */
+        ret = bpf_clone_redirect(ctx, b0->ifindex, BPF_F_INGRESS);
+        bpf_printk("mirror clone->if%d ret=%d\n", b0->ifindex, ret);
+
+        /* 2. rewrite headers for the *other* back-end and redirect */
         trace_printk("mirror rewrite ip=%pI4 if=%u\n",
                      sizeof("mirror rewrite ip=%pI4 if=%u\n"),
                      &alt->ip, alt->ifindex);
