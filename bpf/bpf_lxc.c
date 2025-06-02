@@ -143,6 +143,7 @@ static __always_inline int rewrite_packet_headers(struct __ctx_buff *ctx,
 /* ------------------------------------------------------------------ */
 /* Duplicate UDP/9000 frames to the two back-ends in dup_backends map */
 /* ------------------------------------------------------------------ */
+/* --------------------------------------------------------------------- */
 static __always_inline int
 handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 {
@@ -150,10 +151,10 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         struct iphdr  *ip4;
         struct udphdr *udp;
         struct dup_backends_key   key = {};
-        struct dup_backends_value *backend;
+        struct dup_backends_value *b0, *b1, *alt = NULL;
         int ret;
 
-        /* ---- load IPv4 header --------------------------------------- */
+        /* ---- IPv4 header ---------------------------------------------- */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&ip4, l3_off,
                                     sizeof(*ip4), false))
@@ -162,7 +163,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         if (ip4->protocol != IPPROTO_UDP)
                 return TC_ACT_OK;
 
-        /* ---- load UDP header ---------------------------------------- */
+        /* ---- UDP header ------------------------------------------------ */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&udp,
                                     l3_off + (ip4->ihl * 4),
@@ -172,35 +173,58 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
                 return TC_ACT_OK;
 
-        bpf_printk("mirror: UDP/9000 pkt saddr=0x%x daddr=0x%x\n",
-                   ip4->saddr, ip4->daddr);
+        /* DBG ─ packet summary ------------------------------------------ */
+        trace_printk("mirror pkt s=%pI4 d=%pI4 sp=%u dp=%u\n",
+                     sizeof("mirror pkt s=%pI4 d=%pI4 sp=%u dp=%u\n"),
+                     &ip4->saddr, &ip4->daddr,
+                     bpf_ntohs(udp->source), bpf_ntohs(udp->dest));
 
-        /* 1) ───── duplicate to backend[0] ──────────────────────────── */
-        key.idx = 0;
-        backend = map_lookup_elem(&dup_backends, &key);
-        if (backend) {
-                /* first rewrite ctx so the clone has correct headers   */
-                ret = rewrite_packet_headers(ctx, backend, l3_off);
-                if (ret < 0)
-                        return ret;
+        /* ---- look up both mirror back-ends ---------------------------- */
+        key.idx = 0;  b0 = map_lookup_elem(&dup_backends, &key);
+        key.idx = 1;  b1 = map_lookup_elem(&dup_backends, &key);
 
-                ret = bpf_clone_redirect(ctx, backend->ifindex, 0);
-                bpf_printk("mirror: clone+redir -> if%d ret=%d\n",
-                           backend->ifindex, ret);
+        if (!(b0 && b1)) {
+                bpf_printk("mirror backends not ready b0=%p b1=%p\n", b0, b1);
+                return TC_ACT_OK;
         }
 
-        /* 2) ───── redirect ctx through backend[1] ───────────────────── */
-        key.idx = 1;
-        backend = map_lookup_elem(&dup_backends, &key);
-        if (!backend)
-                return TC_ACT_OK;                   /* nothing else */
+        /* DBG ─ backend table snapshot ----------------------------------- */
+        trace_printk("mirror b0 ip=%pI4 if=%u  b1 ip=%pI4 if=%u\n",
+                     sizeof("mirror b0 ip=%pI4 if=%u  b1 ip=%pI4 if=%u\n"),
+                     &b0->ip, b0->ifindex, &b1->ip, b1->ifindex);
 
-        ret = rewrite_packet_headers(ctx, backend, l3_off);
-        if (ret < 0)
+        /* 1. Clone pristine copy to b0 ---------------------------------- */
+        ret = bpf_clone_redirect(ctx, b0->ifindex, BPF_F_INGRESS);
+        bpf_printk("mirror clone -> if%d ret=%d\n", b0->ifindex, ret);
+
+        /* 2. Decide alternate target ------------------------------------ */
+        if (ip4->daddr == b0->ip)
+                alt = b1;
+        else if (ip4->daddr == b1->ip)
+                alt = b0;
+
+        if (!alt) {
+                trace_printk("mirror alt unresolved daddr=%pI4\n",
+                             sizeof("mirror alt unresolved daddr=%pI4\n"),
+                             &ip4->daddr);
+                return TC_ACT_OK;
+        }
+
+        /* Rewrite headers for the second copy --------------------------- */
+        trace_printk("mirror rewrite to ip=%pI4 if=%u\n",
+                     sizeof("mirror rewrite to ip=%pI4 if=%u\n"),
+                     &alt->ip, alt->ifindex);
+
+        ret = rewrite_packet_headers(ctx, alt, l3_off);
+        if (ret < 0) {
+                bpf_printk("mirror rewrite failed %d\n", ret);
                 return ret;
+        }
 
-        bpf_printk("mirror: redirect ctx -> if%d\n", backend->ifindex);
-        return bpf_redirect(backend->ifindex, 0);
+        /* Final redirect ------------------------------------------------- */
+        ret = bpf_redirect(alt->ifindex, BPF_F_INGRESS);
+        bpf_printk("mirror redirect -> if%d ret=%d\n", alt->ifindex, ret);
+        return ret;
 }
 #endif /* ENABLE_IPV4 */
 
