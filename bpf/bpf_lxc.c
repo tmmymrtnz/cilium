@@ -220,13 +220,13 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                      &alt->ip,  alt->ifindex);
 
         /* ---- 1) clone pristine copy to primary -------------------- */
-        ret = bpf_clone_redirect(ctx, b2->ifindex, 0);
+        ret = bpf_clone_redirect(ctx, b2->ifindex, BPF_F_INGRESS);
         bpf_printk("mirror clone->if%d ret=%d\n", b2->ifindex, ret);
 
         /* ---- 2) rewrite headers toward alternate ------------------ */
         trace_printk("mirror rewrite ip=%pI4 if=%u\n",
                      sizeof("mirror rewrite ip=%pI4 if=%u\n"),
-                     &alt->ip, alt->ifindex);
+                     &alt->ip, b2->ifindex);
 
         ret = rewrite_packet_headers(ctx, alt, l3_off);
         if (ret < 0) {
@@ -234,8 +234,8 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                 return ret;
         }
 
-        ret = bpf_redirect(b2->ifindex, 0);
-        bpf_printk("mirror redir->if%d ret=%d\n", alt->ifindex, ret);
+        ret = bpf_redirect(b2->ifindex, BPF_F_INGRESS);
+        bpf_printk("mirror redir->if%d ret=%d\n", b2->ifindex, ret);
 
         return ret;
 }
