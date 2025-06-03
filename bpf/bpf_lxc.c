@@ -188,7 +188,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         key.idx = 1;  b1 = map_lookup_elem(&dup_backends, &key);
 		key.idx = 2;  b2 = map_lookup_elem(&dup_backends, &key);
 
-        if (!(b0 && b1)) {
+        if (!(b0 && b1 && b2)) {
                 bpf_printk("mirror backends not ready b0=%p b1=%p\n", b0, b1);
                 return TC_ACT_OK;
         }
@@ -221,7 +221,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 
         /* ---- 1) clone pristine copy to primary -------------------- */
         ret = bpf_clone_redirect(ctx, b2->ifindex, 0);
-        bpf_printk("mirror clone->if%d ret=%d\n", prim->ifindex, ret);
+        bpf_printk("mirror clone->if%d ret=%d\n", b2->ifindex, ret);
 
         /* ---- 2) rewrite headers toward alternate ------------------ */
         trace_printk("mirror rewrite ip=%pI4 if=%u\n",
