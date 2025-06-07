@@ -83,103 +83,62 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
                        struct dup_backends_value *backend,
                        __u32 l3_off)
 {
-    void            *data, *data_end;
-    struct iphdr    *ip4;
-    struct udphdr   *udp;
-    __be32           new_daddr = backend->ip; /* map → wire */
-    __be32           old_daddr;
-    __sum16          ip_check;
-    __s32            diff;
-    __u32            ip_hlen;
-    int              ret;
+        void            *data, *data_end;
+        struct iphdr    *ip4;
+        struct udphdr   *udp;
+        __be32           new_daddr = backend->ip; /* map → wire */
+        __be32           old_daddr;
+        __sum16          ip_check;
+        __s32            diff;
+        int              ret;
 
-    /* ---- pull IPv4 header -------------------------------------- */
-    if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                (void **)&ip4, l3_off,
-                                sizeof(*ip4), false))
-        return DROP_INVALID;
+        /* ---- pull IPv4 header -------------------------------------- */
+        if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                    (void **)&ip4, l3_off,
+                                    sizeof(*ip4), false))
+                return DROP_INVALID;
 
-    /* Capture IP header length (in bytes) before any modifications */
-    ip_hlen = ip4->ihl * 4;
-    old_daddr = ip4->daddr;
-    ip_check  = ip4->check;
+        old_daddr = ip4->daddr;
+        ip_check  = ip4->check;
 
-    /* ---- update IPv4 checksum & dst address -------------------- */
-    diff = csum_diff4(old_daddr, new_daddr, ip_check);
+        /* ---- update IPv4 checksum & dst address -------------------- */
+        diff = csum_diff4(old_daddr, new_daddr, ip_check);
 
-    ret = ipv4_store_daddr(ctx, new_daddr, l3_off);
-    if (ret < 0)
-        return ret;
-
-    ret = ipv4_store_check(ctx, (__sum16)diff, l3_off);
-    if (ret < 0)
-        return ret;
-
-    /* ---- pull UDP header (pointers invalidated) ---------------- */
-    if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                (void **)&udp,
-                                l3_off + ip_hlen,
-                                sizeof(*udp), false))
-        return DROP_INVALID;
-
-    /* ---- fix UDP checksum for IP-dst change if present --------- */
-    if (udp->check != 0) {
-        diff = csum_diff4(old_daddr, new_daddr, udp->check);
-
-        ret = bpf_l4_csum_replace(ctx,
-                                  l3_off + ip_hlen +
-                                  offsetof(struct udphdr, check),
-                                  0,        /* old folded in diff */
-                                  diff,
-                                  sizeof(udp->check));
+        ret = ipv4_store_daddr(ctx, new_daddr, l3_off);
         if (ret < 0)
-            return ret;
+                return ret;
 
-        bpf_printk("mirror: UDP checksum patched (ifindex %d)\n",
-                   backend->ifindex);
-    }
+        ret = ipv4_store_check(ctx, (__sum16)diff, l3_off);
+        if (ret < 0)
+                return ret;
 
-    /* ---- change UDP dest port to 9001 -------------------------- */
-    {
-        __be16 old_dport;
-        __be16 new_dport;
-
-        /* Re‐pull UDP header to ensure pointers remain valid */
+        /* ---- pull UDP header (pointers invalidated) ---------------- */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&udp,
-                                    l3_off + ip_hlen,
+                                    l3_off + sizeof(*ip4),
                                     sizeof(*udp), false))
-            return DROP_INVALID;
+                return DROP_INVALID;
 
-        old_dport = udp->dest;
-        new_dport = bpf_htons(9001);
-
-        /* adjust UDP checksum for port change if checksum is nonzero */
+        /* ---- fix UDP checksum if present --------------------------- */
         if (udp->check != 0) {
-            ret = bpf_l4_csum_replace(ctx,
-                                      l3_off + ip_hlen +
-                                      offsetof(struct udphdr, check),
-                                      old_dport,
-                                      new_dport,
-                                      sizeof(new_dport));
-            if (ret < 0)
-                return ret;
+                diff = csum_diff4(old_daddr, new_daddr, udp->check);
+
+                ret = bpf_l4_csum_replace(ctx,
+                                          l3_off + sizeof(*ip4) +
+                                          offsetof(struct udphdr, check),
+                                          0,        /* old folded in diff */
+                                          diff,
+                                          sizeof(udp->check));
+                if (ret < 0)
+                        return ret;
+
+                bpf_printk("mirror: UDP checksum patched (ifindex %d)\n",
+                           backend->ifindex);
         }
-
-        /* overwrite the UDP dest-port field in the packet */
-        ret = bpf_skb_store_bytes(ctx,
-                                  l3_off + ip_hlen +
-                                  offsetof(struct udphdr, dest),
-                                  &new_dport,
-                                  sizeof(new_dport),
-                                  0);
-        if (ret < 0)
-            return ret;
-    }
-
-    /* ---- rewrite Ethernet destination MAC ---------------------- */
-    return eth_store_daddr(ctx, backend->mac, 0);   /* 0 on success */
+        /* ---- rewrite Ethernet destination MAC ---------------------- */
+        return eth_store_daddr(ctx, backend->mac, 0);   /* 0 on success */
 }
+
 /* ========================================================= *
  *  Main hook: duplicate UDP/9000 traffic to both back-ends   *
  * ========================================================= */
