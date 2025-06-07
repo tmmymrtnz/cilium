@@ -135,6 +135,7 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
                 bpf_printk("mirror: UDP checksum patched (ifindex %d)\n",
                            backend->ifindex);
         }
+
         /* ---- rewrite Ethernet destination MAC ---------------------- */
         return eth_store_daddr(ctx, backend->mac, 0);   /* 0 on success */
 }
@@ -150,7 +151,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         struct iphdr              *ip4;
         struct udphdr             *udp;
         struct dup_backends_key    key = {};
-        struct dup_backends_value *b0, *b1, *b2;
+        struct dup_backends_value *b0, *b1;
         struct dup_backends_value *prim = NULL, *alt = NULL;
         __be32                     b0_ip_be = 0;
         __be32                     b1_ip_be = 0;
@@ -186,9 +187,8 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         /* ---- lookup both back-ends -------------------------------- */
         key.idx = 0;  b0 = map_lookup_elem(&dup_backends, &key);
         key.idx = 1;  b1 = map_lookup_elem(&dup_backends, &key);
-		key.idx = 2;  b2 = map_lookup_elem(&dup_backends, &key);
 
-        if (!(b0 && b1 && b2)) {
+        if (!(b0 && b1)) {
                 bpf_printk("mirror backends not ready b0=%p b1=%p\n", b0, b1);
                 return TC_ACT_OK;
         }
@@ -220,13 +220,13 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                      &alt->ip,  alt->ifindex);
 
         /* ---- 1) clone pristine copy to primary -------------------- */
-        ret = bpf_clone_redirect(ctx, b2->ifindex, BPF_F_INGRESS);
-        bpf_printk("mirror clone->if%d ret=%d\n", b2->ifindex, ret);
+        ret = bpf_clone_redirect(ctx, prim->ifindex, BPF_F_INGRESS);
+        bpf_printk("mirror clone->if%d ret=%d\n", prim->ifindex, ret);
 
         /* ---- 2) rewrite headers toward alternate ------------------ */
         trace_printk("mirror rewrite ip=%pI4 if=%u\n",
                      sizeof("mirror rewrite ip=%pI4 if=%u\n"),
-                     &alt->ip, b2->ifindex);
+                     &alt->ip, alt->ifindex);
 
         ret = rewrite_packet_headers(ctx, alt, l3_off);
         if (ret < 0) {
@@ -234,8 +234,8 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                 return ret;
         }
 
-        ret = bpf_redirect(b2->ifindex, BPF_F_INGRESS);
-        bpf_printk("mirror redir->if%d ret=%d\n", b2->ifindex, ret);
+        ret = bpf_redirect(alt->ifindex, BPF_F_INGRESS);
+        bpf_printk("mirror redir->if%d ret=%d\n", alt->ifindex, ret);
 
         return ret;
 }
