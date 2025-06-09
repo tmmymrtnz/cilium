@@ -230,7 +230,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         bpf_printk("mirror: set mark=0x%x\n", ctx->mark);
 
         /* ---- 1) clone pristine copy to PRIMARY ------------------- */
-        ret = bpf_clone_redirect(ctx, prim->ifindex, BPF_F_INGRESS);
+        ret = bpf_clone_redirect(ctx, prim->ifindex, 0);
         bpf_printk("mirror: clone->if%u ret=%d\n", prim->ifindex, ret);
 
         /* ---- 2) rewrite headers toward ALTERNATE ----------------- */
@@ -245,7 +245,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         }
 
         /* ---- 3) redirect original (now rewritten) ---------------- */
-        ret = bpf_redirect(alt->ifindex, BPF_F_INGRESS);
+        ret = bpf_redirect(alt->ifindex, 0);
         bpf_printk("mirror: redir->if%u ret=%d\n", alt->ifindex, ret);
 
         return ret;
