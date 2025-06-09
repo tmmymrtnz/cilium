@@ -192,15 +192,13 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         if (!(b0 && b1 && b_cli))
                 return TC_ACT_OK;
 
-        /* don’t mirror back-end → client direction */
+        /* don’t mirror back-end → client traffic */
         if (ctx->ifindex == b0->ifindex || ctx->ifindex == b1->ifindex)
                 return TC_ACT_OK;
 
-        if (ip4->daddr == b0->ip)
-                alt = b1;
-        else if (ip4->daddr == b1->ip)
-                alt = b0;
-        else
+        alt = (ip4->daddr == b0->ip) ? b1 :
+              (ip4->daddr == b1->ip) ? b0 : NULL;
+        if (!alt)
                 return TC_ACT_OK;
 
         /* ---------- save originals ----------------------------- */
@@ -210,7 +208,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 #pragma unroll
         for (i = 0; i < ETH_ALEN; i++)
                 save_dmac[i] = eth->h_dest[i];
-        save_mark     = ctx->mark;
+        save_mark = ctx->mark;
 
         /* ---------- rewrite dest → ALT ------------------------- */
         ret = rewrite_packet_headers(ctx, alt, l3_off);
@@ -222,18 +220,13 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         ret = bpf_clone_redirect(ctx, ctx->ifindex, BPF_F_INGRESS);
         bpf_printk("mirror: rewrite+clone if%d ret=%d\n", ctx->ifindex, ret);
 
-        /* ---------- re-pull IP & UDP (fresh, verifier-safe) ----- */
+        /* ---------- re-pull IP & UDP (verifier-safe) ------------ */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&ip4, l3_off,
                                     sizeof(*ip4), false))
                 return DROP_INVALID;
         eth = data;
-
-        if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                    (void **)&udp,
-                                    l3_off + (ip4->ihl * 4),
-                                    sizeof(*udp), false))
-                return DROP_INVALID;
+        /* UDP pointer not strictly needed any more */
 
         /* ---------- restore original dst / MAC / checksums ------ */
         {
@@ -242,12 +235,13 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                 ipv4_store_check(ctx, (__sum16)diff, l3_off);
 
                 if (save_udp_csum) {
-                        diff = csum_diff4(alt->ip, save_daddr, udp->check);
+                        diff = csum_diff4(alt->ip, save_daddr, save_udp_csum);
                         bpf_l4_csum_replace(ctx,
                                 l3_off + sizeof(*ip4) +
                                 offsetof(struct udphdr, check),
                                 0, diff, sizeof(udp->check));
                 }
+
                 eth_store_daddr(ctx, save_dmac, 0);
                 ctx->mark = save_mark | MIRROR_DONE_MARK;
         }
