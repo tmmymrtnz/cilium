@@ -143,6 +143,9 @@
 /* ========================================================= *
  *  Main hook: duplicate UDP/9000 traffic to both back-ends   *
  * ========================================================= */
+
+ static const __u32 TUN_IFINDEX = 5;
+
 static __always_inline int
 handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 {
@@ -204,7 +207,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 
         /* ---- clone *unaltered* packet to the alternate ----------- */
         ctx->mark |= MIRROR_DONE_MARK;    /* so the clone isn’t re-cloned */
-        ret = bpf_clone_redirect(ctx, alt->ifindex, 0);
+        ret = bpf_clone_redirect(ctx, TUN_IFINDEX, 0);
         bpf_printk("mirror: simple clone to if%u ret=%d\n", alt->ifindex, ret);
 
         /* ---- let the original packet continue ------------------- */
