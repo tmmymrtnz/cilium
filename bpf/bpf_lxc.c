@@ -84,27 +84,27 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
                        struct dup_backends_value *backend,
                        __u32 l3_off)
 {
-        /* -------- local vars ----------------------------------- */
+        /* ---- declarations (C-89) -------------------------------- */
         void            *data, *data_end;
         struct iphdr    *ip4;
         struct udphdr   *udp;
-        __be32           new_daddr = backend->ip;
+        __be32           new_daddr = backend->ip;   /* map → wire */
         __be32           old_daddr;
-        __sum16          old_ip_csum;
+        __sum16          ip_check;
         __s32            diff;
         int              ret;
 
-        /* -------- pull IPv4 ------------------------------------ */
+        /* ---- pull IPv4 header ----------------------------------- */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&ip4, l3_off,
                                     sizeof(*ip4), false))
                 return DROP_INVALID;
 
-        old_daddr   = ip4->daddr;
-        old_ip_csum = ip4->check;
+        old_daddr = ip4->daddr;
+        ip_check  = ip4->check;
 
-        /* -------- IPv4 dst + header-checksum ------------------- */
-        diff = csum_diff4(old_daddr, new_daddr, old_ip_csum);
+        /* ---- update IPv4 dst-addr & checksum -------------------- */
+        diff = csum_diff4(old_daddr, new_daddr, ip_check);
 
         ret = ipv4_store_daddr(ctx, new_daddr, l3_off);
         if (ret < 0)
@@ -114,38 +114,32 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
         if (ret < 0)
                 return ret;
 
-        /* -------- pull UDP ------------------------------------- */
+        /* ---- pull UDP header ------------------------------------ */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&udp,
                                     l3_off + sizeof(*ip4),
                                     sizeof(*udp), false))
                 return DROP_INVALID;
 
-        /* -------- fix UDP checksum if set ---------------------- */
+        /* ---- clear UDP checksum (0 == “checksum disabled”) ------ */
         if (udp->check != 0) {
-                /*
-                 * delta introduced by new IPv4 dst-address
-                 * (pseudo-header — old dst → new dst)
-                 */
-                diff = csum_diff4(old_daddr, new_daddr, 0);
+                __u16 zero = 0;
 
-                ret = bpf_l4_csum_replace(ctx,
+                ret = bpf_skb_store_bytes(ctx,
                                           l3_off + sizeof(*ip4) +
                                           offsetof(struct udphdr, check),
-                                          udp->check,       /* old value   */
-                                          diff,             /* add delta   */
-                                          BPF_F_PSEUDO_HDR  /* include ph */
-                                          | sizeof(__u16)); /* checksum size */
+                                          &zero, sizeof(zero), 0);
                 if (ret < 0)
                         return ret;
 
-                bpf_printk("mirror: UDP checksum patched (ifidx %d)\n",
+                bpf_printk("mirror: UDP checksum cleared (ifidx %d)\n",
                            backend->ifindex);
         }
 
-        /* -------- Ethernet DMAC -------------------------------- */
+        /* ---- rewrite Ethernet DMAC ------------------------------ */
         return eth_store_daddr(ctx, backend->mac, 0);
 }
+
 /* ========================================================= *
  *  Main hook: duplicate UDP/9000 traffic to both back-ends   *
  * ========================================================= */
