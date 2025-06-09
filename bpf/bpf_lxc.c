@@ -79,100 +79,102 @@
 /* ========================================================= *
  *  Helpers: rewrite IPv4 + UDP + Ethernet headers in-place   *
  * ========================================================= */
-// static __always_inline int
-// rewrite_packet_headers(struct __ctx_buff *ctx,
-//                        struct dup_backends_value *backend,
-//                        __u32 l3_off)
-// {
-//         /* ---- declarations (C-89) --------------------------------- */
-//         void            *data, *data_end;
-//         struct iphdr    *ip4;
-//         struct udphdr   *udp;
-//         __be32           new_daddr = backend->ip; /* map → wire */
-//         __be32           old_daddr;
-//         __sum16          ip_check;
-//         __s32            diff;
-//         int              ret;
-
-//         /* ---- pull IPv4 header ------------------------------------ */
-//         if (!__revalidate_data_pull(ctx, &data, &data_end,
-//                                     (void **)&ip4, l3_off,
-//                                     sizeof(*ip4), false))
-//                 return DROP_INVALID;
-
-//         old_daddr = ip4->daddr;
-//         ip_check  = ip4->check;
-
-//         /* ---- update IPv4 checksum & dst address ------------------ */
-//         diff = csum_diff4(old_daddr, new_daddr, ip_check);
-
-//         ret = ipv4_store_daddr(ctx, new_daddr, l3_off);
-//         if (ret < 0)
-//                 return ret;
-
-//         ret = ipv4_store_check(ctx, (__sum16)diff, l3_off);
-//         if (ret < 0)
-//                 return ret;
-
-//         /* ---- pull UDP header ------------------------------------- */
-//         if (!__revalidate_data_pull(ctx, &data, &data_end,
-//                                     (void **)&udp,
-//                                     l3_off + sizeof(*ip4),
-//                                     sizeof(*udp), false))
-//                 return DROP_INVALID;
-
-//         /* ---- fix UDP checksum if present ------------------------- */
-//         if (udp->check != 0) {
-//                 diff = csum_diff4(old_daddr, new_daddr, udp->check);
-
-//                 ret = bpf_l4_csum_replace(ctx,
-//                                           l3_off + sizeof(*ip4) +
-//                                           offsetof(struct udphdr, check),
-//                                           0, diff, sizeof(udp->check));
-//                 if (ret < 0)
-//                         return ret;
-
-//                 bpf_printk("mirror: UDP checksum patched (ifidx %d)\n",
-//                            backend->ifindex);
-//         }
-
-//         /* ---- rewrite Ethernet destination MAC -------------------- */
-//         return eth_store_daddr(ctx, backend->mac, 0);
-// }
-
-/* ========================================================= *
- *  Main hook: duplicate UDP/9000 traffic to both back-ends   *
- * ========================================================= */
-
- static const __u32 TUN_IFINDEX = 5;
-
 static __always_inline int
-handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
+rewrite_packet_headers(struct __ctx_buff *ctx,
+                       struct dup_backends_value *backend,
+                       __u32 l3_off)
 {
-        /* ---- declarations (C-89) -------------------------------- */
-        void                      *data, *data_end;
-        struct iphdr              *ip4;
-        struct udphdr             *udp;
-        struct dup_backends_key    key = {};
-        struct dup_backends_value *b0, *b1, *b2;
-        struct dup_backends_value *alt = NULL;
-        __be32                     b0_ip_be, b1_ip_be;
-        int                        ret;
+        /* ---- declarations (C-89) --------------------------------- */
+        void            *data, *data_end;
+        struct iphdr    *ip4;
+        struct udphdr   *udp;
+        __be32           new_daddr = backend->ip; /* map → wire */
+        __be32           old_daddr;
+        __sum16          ip_check;
+        __s32            diff;
+        int              ret;
 
-        /* ---- already mirrored? ---------------------------------- */
-        if (ctx->mark & MIRROR_DONE_MARK)
-                return TC_ACT_OK;
-
-        /* ---- pull IPv4 header ----------------------------------- */
+        /* ---- pull IPv4 header ------------------------------------ */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&ip4, l3_off,
                                     sizeof(*ip4), false))
                 return DROP_INVALID;
 
+        old_daddr = ip4->daddr;
+        ip_check  = ip4->check;
+
+        /* ---- update IPv4 checksum & dst address ------------------ */
+        diff = csum_diff4(old_daddr, new_daddr, ip_check);
+
+        ret = ipv4_store_daddr(ctx, new_daddr, l3_off);
+        if (ret < 0)
+                return ret;
+
+        ret = ipv4_store_check(ctx, (__sum16)diff, l3_off);
+        if (ret < 0)
+                return ret;
+
+        /* ---- pull UDP header ------------------------------------- */
+        if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                    (void **)&udp,
+                                    l3_off + sizeof(*ip4),
+                                    sizeof(*udp), false))
+                return DROP_INVALID;
+
+        /* ---- fix UDP checksum if present ------------------------- */
+        if (udp->check != 0) {
+                diff = csum_diff4(old_daddr, new_daddr, udp->check);
+
+                ret = bpf_l4_csum_replace(ctx,
+                                          l3_off + sizeof(*ip4) +
+                                          offsetof(struct udphdr, check),
+                                          0, diff, sizeof(udp->check));
+                if (ret < 0)
+                        return ret;
+
+                bpf_printk("mirror: UDP checksum patched (ifidx %d)\n",
+                           backend->ifindex);
+        }
+
+        /* ---- rewrite Ethernet destination MAC -------------------- */
+        return eth_store_daddr(ctx, backend->mac, 0);
+}
+
+/* ========================================================= *
+ *  Main hook: duplicate UDP/9000 traffic to both back-ends   *
+ * ========================================================= */
+
+static __always_inline int
+handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
+{
+        /* ---------------- declarations (C-89) ------------------- */
+        void                      *data, *data_end;
+        struct ethhdr             *eth;
+        struct iphdr              *ip4;
+        struct udphdr             *udp;
+        struct dup_backends_key    key = {};
+        struct dup_backends_value *b0, *b1, *b_client, *alt = NULL;
+        __be32                     save_ip;
+        __sum16                    save_ip_csum, save_udp_csum;
+        __u8                       save_dmac[ETH_ALEN];
+        __u32                      save_mark;
+        __s32                      diff;          /* <-- moved up  */
+        int                        i, ret;
+
+        /* -------- loop-prevention: already cloned? -------------- */
+        if (ctx->mark & MIRROR_DONE_MARK)
+                return TC_ACT_OK;
+
+        /* ------------- pull Ethernet + IPv4 --------------------- */
+        if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                    (void **)&ip4, l3_off,
+                                    sizeof(*ip4), false))
+                return DROP_INVALID;
+        eth = data;
+
         if (ip4->protocol != IPPROTO_UDP)
                 return TC_ACT_OK;
 
-        /* ---- pull UDP header ------------------------------------ */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&udp,
                                     l3_off + (ip4->ihl * 4),
@@ -182,36 +184,61 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
                 return TC_ACT_OK;
 
-        /* ---- look up the three back-end slots ------------------- */
+        /* -------------- look up backend map entries ------------- */
         key.idx = 0; b0 = map_lookup_elem(&dup_backends, &key);
         key.idx = 1; b1 = map_lookup_elem(&dup_backends, &key);
-        key.idx = 2; b2 = map_lookup_elem(&dup_backends, &key); /* client */
-
-        if (!(b0 && b1 && b2))
+        key.idx = 2; b_client = map_lookup_elem(&dup_backends, &key);
+        if (!(b0 && b1 && b_client))
                 return TC_ACT_OK;
 
-        /* ---- don't mirror packets that are already on a backend -- */
         if (ctx->ifindex == b0->ifindex || ctx->ifindex == b1->ifindex)
                 return TC_ACT_OK;
 
-        /* ---- choose the alternate ------------------------------- */
-        b0_ip_be = b0->ip;
-        b1_ip_be = b1->ip;
+        /* -------------- pick the alternate backend -------------- */
+        alt = (ip4->daddr == b0->ip) ? b1 :
+              (ip4->daddr == b1->ip) ? b0 : NULL;
+        if (!alt)
+                return TC_ACT_OK;
 
-        if (ip4->daddr == b0_ip_be)
-                alt = b1;
-        else if (ip4->daddr == b1_ip_be)
-                alt = b0;
-        else
-                return TC_ACT_OK;         /* not traffic to a mirrored BE */
+        /* -------------- save original fields -------------------- */
+        save_ip        = ip4->daddr;
+        save_ip_csum   = ip4->check;
+        save_udp_csum  = udp->check;
+#pragma unroll
+        for (i = 0; i < ETH_ALEN; i++)
+                save_dmac[i] = eth->h_dest[i];
+        save_mark      = ctx->mark;
 
-        /* ---- clone *unaltered* packet to the alternate ----------- */
-        ctx->mark |= MIRROR_DONE_MARK;    /* so the clone isn’t re-cloned */
-        ret = bpf_clone_redirect(ctx, TUN_IFINDEX, 0);
-        bpf_printk("mirror: simple clone to if%u ret=%d\n", alt->ifindex, ret);
+        /* -------------- rewrite → ALT backend ------------------- */
+        ret = rewrite_packet_headers(ctx, alt, l3_off);
+        if (ret < 0)
+                goto restore_err;
 
-        /* ---- let the original packet continue ------------------- */
+        /* -------------- clone back into same pipeline ----------- */
+        ctx->mark |= MIRROR_DONE_MARK;                /* no re-clone */
+        ret = bpf_clone_redirect(ctx, ctx->ifindex, BPF_F_INGRESS);
+        bpf_printk("mirror: rewritten clone → if%d ret=%d\n",
+                   ctx->ifindex, ret);
+
+        /* -------------- restore original packet ----------------- */
+        diff = csum_diff4(alt->ip, save_ip, save_ip_csum);
+        ipv4_store_daddr(ctx, save_ip, l3_off);
+        ipv4_store_check(ctx, (__sum16)diff, l3_off);
+
+        if (save_udp_csum) {
+                diff = csum_diff4(alt->ip, save_ip, udp->check);
+                bpf_l4_csum_replace(ctx,
+                        l3_off + sizeof(*ip4) +
+                        offsetof(struct udphdr, check),
+                        0, diff, sizeof(udp->check));
+        }
+        eth_store_daddr(ctx, save_dmac, 0);
+        ctx->mark = save_mark;
         return TC_ACT_OK;
+
+restore_err:
+        ctx->mark = save_mark;
+        return TC_ACT_SHOT;
 }
 
 #endif /* ENABLE_IPV4 */
