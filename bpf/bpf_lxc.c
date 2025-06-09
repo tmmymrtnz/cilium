@@ -226,6 +226,18 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         ret = bpf_clone_redirect(ctx, alt->ifindex, 0);
         bpf_printk("mirror: clone->alt if%u ret=%d\n", alt->ifindex, ret);
 
+        /* ---- re-pull headers – rewrite may have invalidated them */
+        if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                    (void **)&ip4, l3_off,
+                                    sizeof(*ip4), false))
+                goto restore_and_err;
+
+        if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                    (void **)&udp,
+                                    l3_off + (ip4->ihl * 4),
+                                    sizeof(*udp), false))
+                goto restore_and_err;
+
         /* ---- restore everything for the original path ----------- */
         {
                 __s32 diff;
@@ -259,6 +271,7 @@ restore_and_err:
         ctx->mark = orig_mark;
         return ret;
 }
+
 #endif /* ENABLE_IPV4 */
 
 /* Per-packet LB ... */
