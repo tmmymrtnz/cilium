@@ -73,6 +73,7 @@
                  _s, _d);                                                     \
 } while (0)
 
+#define MIRROR_DONE_MARK (1u << 30)
 
 #ifdef ENABLE_IPV4
 /* ========================================================= *
@@ -135,7 +136,6 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
                 bpf_printk("mirror: UDP checksum patched (ifindex %d)\n",
                            backend->ifindex);
         }
-
         /* ---- rewrite Ethernet destination MAC ---------------------- */
         return eth_store_daddr(ctx, backend->mac, 0);   /* 0 on success */
 }
@@ -146,12 +146,16 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
 static __always_inline int
 handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 {
+        /* ---- stop already-mirrored packets right away ------------- */
+        if (ctx->mark & MIRROR_DONE_MARK)
+                return TC_ACT_OK;
+
         /* ---- declarations first (C-89) ----------------------------- */
         void                      *data, *data_end;
         struct iphdr              *ip4;
         struct udphdr             *udp;
         struct dup_backends_key    key = {};
-        struct dup_backends_value *b0, *b1;
+        struct dup_backends_value *b0, *b1, *b2;
         struct dup_backends_value *prim = NULL, *alt = NULL;
         __be32                     b0_ip_be = 0;
         __be32                     b1_ip_be = 0;
@@ -176,68 +180,44 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
                 return TC_ACT_OK;
 
-        /* ---- basic packet log ------------------------------------- */
-        trace_printk("mirror pkt s=%pI4 d=%pI4\n",
-                     sizeof("mirror pkt s=%pI4 d=%pI4\n"),
-                     &ip4->saddr, &ip4->daddr);
-        trace_printk("mirror ports s=%u d=%u\n",
-                     sizeof("mirror ports s=%u d=%u\n"),
-                     bpf_ntohs(udp->source), bpf_ntohs(udp->dest));
-
-        /* ---- lookup both back-ends -------------------------------- */
+        /* ---- lookup three map entries ----------------------------- */
         key.idx = 0;  b0 = map_lookup_elem(&dup_backends, &key);
         key.idx = 1;  b1 = map_lookup_elem(&dup_backends, &key);
+        key.idx = 2;  b2 = map_lookup_elem(&dup_backends, &key); /* pod-a */
 
-        if (!(b0 && b1)) {
-                bpf_printk("mirror backends not ready b0=%p b1=%p\n", b0, b1);
+        if (!(b0 && b1 && b2))
                 return TC_ACT_OK;
-        }
 
-        /* ---- dump raw map values for byte-order check ------------- */
-        trace_printk("mirror raw b0=0x%x b1=0x%x\n",
-                     sizeof("mirror raw b0=0x%x b1=0x%x\n"),
-                     b0->ip, b1->ip);
+        /* ---- ignore traffic already on a backend veth ------------- */
+        if (ctx->ifindex == b0->ifindex || ctx->ifindex == b1->ifindex)
+                return TC_ACT_OK;
 
-        /* ---- convert once to wire order --------------------------- */
-		b0_ip_be = b0->ip;
-		b1_ip_be = b1->ip;
+        b0_ip_be = b0->ip;
+        b1_ip_be = b1->ip;
 
-        /* ---- decide primary / alternate --------------------------- */
+        /* ---- decide which back-end is primary / alternate --------- */
         if (ip4->daddr == b0_ip_be) {
                 prim = b0;  alt = b1;
         } else if (ip4->daddr == b1_ip_be) {
                 prim = b1;  alt = b0;
         } else {
-                /* not aimed at either mirror – ignore */
-                return TC_ACT_OK;
+                return TC_ACT_OK;  /* not aimed at either backend */
         }
 
-        trace_printk("mirror prim ip=%pI4 if=%u\n",
-                     sizeof("mirror prim ip=%pI4 if=%u\n"),
-                     &prim->ip, prim->ifindex);
-        trace_printk("mirror alt  ip=%pI4 if=%u\n",
-                     sizeof("mirror alt  ip=%pI4 if=%u\n"),
-                     &alt->ip,  alt->ifindex);
+        /* ---- mark packet so clones are skipped next time ---------- */
+        bpf_skb_set_mark(ctx, ctx->mark | MIRROR_DONE_MARK);
 
-        /* ---- 1) clone pristine copy to primary -------------------- */
+        /* ---- 1) clone pristine copy to the primary backend -------- */
         ret = bpf_clone_redirect(ctx, prim->ifindex, BPF_F_INGRESS);
-        bpf_printk("mirror clone->if%d ret=%d\n", prim->ifindex, ret);
+        /*      (return value intentionally ignored – keep processing) */
 
-        /* ---- 2) rewrite headers toward alternate ------------------ */
-        trace_printk("mirror rewrite ip=%pI4 if=%u\n",
-                     sizeof("mirror rewrite ip=%pI4 if=%u\n"),
-                     &alt->ip, alt->ifindex);
-
+        /* ---- 2) rewrite headers toward the alternate backend ------ */
         ret = rewrite_packet_headers(ctx, alt, l3_off);
-        if (ret < 0) {
-                bpf_printk("mirror rewrite failed %d\n", ret);
+        if (ret < 0)
                 return ret;
-        }
 
-        ret = bpf_redirect(alt->ifindex, BPF_F_INGRESS);
-        bpf_printk("mirror redir->if%d ret=%d\n", alt->ifindex, ret);
-
-        return ret;
+        /* ---- redirect rewritten original to the alternate backend - */
+        return bpf_redirect(alt->ifindex, BPF_F_INGRESS);
 }
 #endif /* ENABLE_IPV4 */
 
