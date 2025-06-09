@@ -148,7 +148,7 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
 static __always_inline int
 handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 {
-        /* -------- declarations (C-89 style) --------------------- */
+        /* ---------- declarations (ANSI-C 89) ------------------- */
         void                      *data, *data_end;
         struct ethhdr             *eth;
         struct iphdr              *ip4;
@@ -161,14 +161,13 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         __u32                      save_mark;
         int                        i, ret;
 
-        /* -------- pull Ethernet + IPv4 header ------------------- */
+        /* ---------- pull L2 & IPv4 ------------------------------ */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&ip4, l3_off,
                                     sizeof(*ip4), false))
                 return DROP_INVALID;
         eth = data;
 
-        /* not UDP? → out */
         if (ip4->protocol != IPPROTO_UDP)
                 return TC_ACT_OK;
 
@@ -182,23 +181,21 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
                 return TC_ACT_OK;
 
-        /* already mirrored? → out */
+        /* already mirrored? */
         if (ctx->mark & MIRROR_DONE_MARK)
                 return TC_ACT_OK;
 
-        /* -------- fetch backend descriptors --------------------- */
+        /* ---------- map look-ups ------------------------------- */
         key.idx = 0; b0    = map_lookup_elem(&dup_backends, &key);
         key.idx = 1; b1    = map_lookup_elem(&dup_backends, &key);
-        key.idx = 2; b_cli = map_lookup_elem(&dup_backends, &key); /* client */
-
+        key.idx = 2; b_cli = map_lookup_elem(&dup_backends, &key);
         if (!(b0 && b1 && b_cli))
                 return TC_ACT_OK;
 
-        /* no mirroring on backend→client direction */
+        /* don’t mirror back-end → client direction */
         if (ctx->ifindex == b0->ifindex || ctx->ifindex == b1->ifindex)
                 return TC_ACT_OK;
 
-        /* decide alternate target */
         if (ip4->daddr == b0->ip)
                 alt = b1;
         else if (ip4->daddr == b1->ip)
@@ -206,7 +203,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         else
                 return TC_ACT_OK;
 
-        /* -------- save original fields to restore later --------- */
+        /* ---------- save originals ----------------------------- */
         save_daddr    = ip4->daddr;
         save_ip_csum  = ip4->check;
         save_udp_csum = udp->check;
@@ -215,26 +212,30 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                 save_dmac[i] = eth->h_dest[i];
         save_mark     = ctx->mark;
 
-        /* -------- rewrite headers toward ALT -------------------- */
+        /* ---------- rewrite dest → ALT ------------------------- */
         ret = rewrite_packet_headers(ctx, alt, l3_off);
         if (ret < 0)
                 goto restore_fail;
 
-        /* -------- clone rewritten skb back into same veth ------- */
-        ctx->mark |= MIRROR_DONE_MARK;                  /* keep set */
+        /* clone the rewritten frame back into the same veth (ingress) */
+        ctx->mark |= MIRROR_DONE_MARK;
         ret = bpf_clone_redirect(ctx, ctx->ifindex, BPF_F_INGRESS);
-        bpf_printk("mirror: rewrite+clone if%d ret=%d\n",
-                   ctx->ifindex, ret);
+        bpf_printk("mirror: rewrite+clone if%d ret=%d\n", ctx->ifindex, ret);
 
-        /* -------- refresh header pointers (verifier-safe) ------- */
+        /* ---------- re-pull IP & UDP (fresh, verifier-safe) ----- */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&ip4, l3_off,
                                     sizeof(*ip4), false))
                 return DROP_INVALID;
         eth = data;
-        udp = (void *)ip4 + (ip4->ihl * 4);
 
-        /* -------- restore original destination + MAC ------------ */
+        if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                    (void **)&udp,
+                                    l3_off + (ip4->ihl * 4),
+                                    sizeof(*udp), false))
+                return DROP_INVALID;
+
+        /* ---------- restore original dst / MAC / checksums ------ */
         {
                 __s32 diff = csum_diff4(alt->ip, save_daddr, save_ip_csum);
                 ipv4_store_daddr(ctx, save_daddr, l3_off);
@@ -243,18 +244,16 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                 if (save_udp_csum) {
                         diff = csum_diff4(alt->ip, save_daddr, udp->check);
                         bpf_l4_csum_replace(ctx,
-                            l3_off + sizeof(*ip4) +
-                            offsetof(struct udphdr, check),
-                            0, diff, sizeof(udp->check));
+                                l3_off + sizeof(*ip4) +
+                                offsetof(struct udphdr, check),
+                                0, diff, sizeof(udp->check));
                 }
                 eth_store_daddr(ctx, save_dmac, 0);
-                /* DO NOT reset MIRROR_DONE_MARK – leave it set      */
                 ctx->mark = save_mark | MIRROR_DONE_MARK;
         }
         return TC_ACT_OK;
 
 restore_fail:
-        /* very unlikely path – still keep the mark */
         ctx->mark = save_mark | MIRROR_DONE_MARK;
         return ret;
 }
