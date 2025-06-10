@@ -150,7 +150,6 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 {
         /* ---------- declarations (ANSI-C 89) ------------------- */
         void                      *data, *data_end;
-        struct ethhdr             *eth;
         struct iphdr              *ip4;
         struct udphdr             *udp;
         struct dup_backends_key    key;
@@ -168,7 +167,6 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                                     (void **)&ip4, l3_off,
                                     sizeof(*ip4), false))
                 return DROP_INVALID;
-        eth = data;
 
         if (ip4->protocol != IPPROTO_UDP)
                 return TC_ACT_OK;
