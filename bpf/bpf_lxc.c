@@ -92,9 +92,9 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
     struct udphdr *udp;
     __be32       new_daddr;
     __be32       old_daddr;
-    __s32        diff;
     int          ret;
     int          ip_hdr_len;
+    __u32        csum_off;
 
     new_daddr = backend->ip;
 
@@ -107,9 +107,13 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
     old_daddr = ip4->daddr;
     ip_hdr_len = ip4->ihl * 4;
 
-    /* Update IPv4 header checksum for dest IP change */
-    diff = csum_diff4(old_daddr, new_daddr, 0);
-    ret = ipv4_store_check(ctx, (__sum16)diff, l3_off);
+    /* Adjust IPv4 header checksum for new destination */
+    csum_off = l3_off + offsetof(struct iphdr, check);
+    ret = bpf_l3_csum_replace(ctx,
+                              csum_off,
+                              old_daddr,
+                              new_daddr,
+                              sizeof(new_daddr));
     if (ret < 0)
         return ret;
 
@@ -127,12 +131,14 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
 
     /* Fix UDP checksum if present */
     if (udp->check != 0) {
+        __s32 diff;
+
         diff = csum_diff4(old_daddr, new_daddr, 0);
         ret = bpf_l4_csum_replace(ctx,
                                   l3_off + ip_hdr_len +
                                   offsetof(struct udphdr, check),
-                                  0,       /* diff mode */
-                                  diff,    /* delta */
+                                  0,
+                                  diff,
                                   PSEUDO_HDR);
         if (ret < 0)
             return ret;
