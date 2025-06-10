@@ -74,6 +74,7 @@
 } while (0)
 
 #define MIRROR_DONE_MARK (1u << 30)
+#define PSEUDO_HDR (1 << 4)
 
 
 #ifdef ENABLE_IPV4
@@ -85,61 +86,63 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
                        struct dup_backends_value *backend,
                        __u32 l3_off)
 {
-        /* ---- declarations (C-89) --------------------------------- */
-        void            *data, *data_end;
-        struct iphdr    *ip4;
-        struct udphdr   *udp;
-        __be32           new_daddr, old_daddr;
-        __sum16          ip_check;
-        __s32            diff;
-        int              ret;
+    void        *data;
+    void        *data_end;
+    struct iphdr  *ip4;
+    struct udphdr *udp;
+    __be32       new_daddr;
+    __be32       old_daddr;
+    __s32        diff;
+    int          ret;
+    int          ip_hdr_len;
 
-        new_daddr = backend->ip; /* map → wire */
+    new_daddr = backend->ip;
 
-        /* ---- pull IPv4 header ------------------------------------ */
-        if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                    (void **)&ip4, l3_off,
-                                    sizeof(*ip4), false))
-                return DROP_INVALID;
+    /* Pull IPv4 header */
+    if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                (void **)&ip4, l3_off,
+                                sizeof(*ip4), 0))
+        return DROP_INVALID;
 
-        old_daddr = ip4->daddr;
-        ip_check  = ip4->check;
+    old_daddr = ip4->daddr;
+    ip_hdr_len = ip4->ihl * 4;
 
-        /* ---- update IPv4 checksum & dst address ------------------ */
-        diff = csum_diff4(old_daddr, new_daddr, ip_check);
+    /* Update IPv4 header checksum for dest IP change */
+    diff = csum_diff4(old_daddr, new_daddr, 0);
+    ret = ipv4_store_check(ctx, (__sum16)diff, l3_off);
+    if (ret < 0)
+        return ret;
 
-        ret = ipv4_store_daddr(ctx, new_daddr, l3_off);
+    /* Write new destination IP */
+    ret = ipv4_store_daddr(ctx, new_daddr, l3_off);
+    if (ret < 0)
+        return ret;
+
+    /* Pull UDP header */
+    if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                (void **)&udp,
+                                l3_off + ip_hdr_len,
+                                sizeof(*udp), 0))
+        return DROP_INVALID;
+
+    /* Fix UDP checksum if present */
+    if (udp->check != 0) {
+        diff = csum_diff4(old_daddr, new_daddr, 0);
+        ret = bpf_l4_csum_replace(ctx,
+                                  l3_off + ip_hdr_len +
+                                  offsetof(struct udphdr, check),
+                                  0,       /* diff mode */
+                                  diff,    /* delta */
+                                  PSEUDO_HDR);
         if (ret < 0)
-                return ret;
+            return ret;
 
-        ret = ipv4_store_check(ctx, (__sum16)diff, l3_off);
-        if (ret < 0)
-                return ret;
+        bpf_printk("mirror: UDP checksum patched (ifidx %d)\n",
+                   backend->ifindex);
+    }
 
-        /* ---- pull UDP header ------------------------------------- */
-        if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                    (void **)&udp,
-                                    l3_off + sizeof(*ip4),
-                                    sizeof(*udp), false))
-                return DROP_INVALID;
-
-        /* ---- fix UDP checksum if present ------------------------- */
-        if (udp->check != 0) {
-                diff = csum_diff4(old_daddr, new_daddr, udp->check);
-
-                ret = bpf_l4_csum_replace(ctx,
-                                          l3_off + sizeof(*ip4) +
-                                          offsetof(struct udphdr, check),
-                                          0, diff, sizeof(udp->check));
-                if (ret < 0)
-                        return ret;
-
-                bpf_printk("mirror: UDP checksum patched (ifidx %d)\n",
-                           backend->ifindex);
-        }
-
-        /* ---- rewrite Ethernet destination MAC -------------------- */
-        return eth_store_daddr(ctx, backend->mac, 0);
+    /* Rewrite Ethernet destination MAC */
+    return eth_store_daddr(ctx, backend->mac, 0);
 }
 
 /* ========================================================= *
