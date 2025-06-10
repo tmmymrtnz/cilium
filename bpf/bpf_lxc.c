@@ -237,21 +237,28 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         eth = data;
 
         /* ---------- restore original dst / MAC / checksums ------ */
-        /* Restore IP address first */
+        /* Restore IP checksum - calculate what the checksum should be after restoring IP */
+        diff = csum_diff4(alt->ip, save_daddr, ip4->check);
         ipv4_store_daddr(ctx, save_daddr, l3_off);
-        
-        /* Restore IP checksum using proper calculation */
-        diff = csum_diff4(alt->ip, save_daddr, save_ip_csum);
         ipv4_store_check(ctx, (__sum16)diff, l3_off);
 
         /* Restore UDP checksum if it was present originally */
         if (save_udp_csum != 0) {
-                /* Calculate UDP checksum diff: from alt->ip back to original IP */
-                diff = csum_diff4(alt->ip, save_daddr, save_udp_csum);
+                /* Get current UDP header after IP restoration */
+                if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                            (void **)&udp,
+                                            l3_off + sizeof(*ip4),
+                                            sizeof(*udp), false)) {
+                        ctx->mark = save_mark | MIRROR_DONE_MARK;
+                        return TC_ACT_OK;
+                }
+                
+                /* Calculate UDP checksum diff: from current state back to original */
+                diff = csum_diff4(alt->ip, save_daddr, udp->check);
                 
                 bpf_l4_csum_replace(ctx,
                         l3_off + sizeof(*ip4) + offsetof(struct udphdr, check),
-                        0, diff, sizeof(__sum16));
+                        0, diff, sizeof(udp->check));
         }
 
         /* Restore Ethernet destination MAC */
