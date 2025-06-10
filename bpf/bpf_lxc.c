@@ -160,6 +160,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         __u8                       save_dmac[ETH_ALEN];
         __u32                      save_mark;
         int                        i, ret;
+		struct udphdr *udp_fix;
 
         /* ---------- pull L2 & IPv4 ------------------------------ */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
@@ -217,7 +218,6 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         bpf_printk("mirror: rewrite+clone if%d ret=%d\n", ctx->ifindex, ret);
 
         /* ---------- pull fresh pointers ------------------------ */
-        struct udphdr *udp_fix;
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&ip4, l3_off,
                                     sizeof(*ip4), false))
