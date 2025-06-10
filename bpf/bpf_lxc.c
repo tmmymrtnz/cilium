@@ -143,6 +143,55 @@ rewrite_packet_headers(struct __ctx_buff *ctx,
 }
 
 /* ========================================================= *
+ *  Helper: Restore checksums using proper difference calc   *
+ * ========================================================= */
+static __always_inline int
+restore_packet_checksums(struct __ctx_buff *ctx, __u32 l3_off,
+                         __be32 original_daddr, __be32 current_daddr)
+{
+        void            *data, *data_end;
+        struct iphdr    *ip4;
+        struct udphdr   *udp;
+        __s32            diff;
+        int              ret;
+
+        /* ---- pull IPv4 header ------------------------------------ */
+        if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                    (void **)&ip4, l3_off,
+                                    sizeof(*ip4), false))
+                return DROP_INVALID;
+
+        /* ---- restore IPv4 checksum ------------------------------- */
+        /* Calculate difference: from current_daddr back to original_daddr */
+        diff = csum_diff4(current_daddr, original_daddr, ip4->check);
+        ret = ipv4_store_check(ctx, (__sum16)diff, l3_off);
+        if (ret < 0)
+                return ret;
+
+        /* ---- pull UDP header ------------------------------------- */
+        if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                    (void **)&udp,
+                                    l3_off + sizeof(*ip4),
+                                    sizeof(*udp), false))
+                return DROP_INVALID;
+
+        /* ---- restore UDP checksum if present --------------------- */
+        if (udp->check != 0) {
+                diff = csum_diff4(current_daddr, original_daddr, udp->check);
+                ret = bpf_l4_csum_replace(ctx,
+                                          l3_off + sizeof(*ip4) +
+                                          offsetof(struct udphdr, check),
+                                          0, diff, sizeof(udp->check));
+                if (ret < 0)
+                        return ret;
+
+                bpf_printk("mirror: UDP checksum restored\n");
+        }
+
+        return 0;
+}
+
+/* ========================================================= *
  *  Main hook: duplicate UDP/9000 traffic to both back-ends   *
  * ========================================================= */
 static __always_inline int
@@ -156,10 +205,8 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         struct dup_backends_key    key;
         struct dup_backends_value *b0, *b1, *b_cli, *alt;
         __be32                     save_daddr;
-        __sum16                    save_udp_csum;
         __u8                       save_dmac[ETH_ALEN];
         __u32                      save_mark;
-        __s32                      diff;
         int                        i, ret;
 
         /* Initialize variables */
@@ -209,8 +256,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                 return TC_ACT_OK;
 
         /* ---------- save originals ----------------------------- */
-        save_daddr    = ip4->daddr;
-        save_udp_csum = udp->check;
+        save_daddr = ip4->daddr;
 #pragma unroll
         for (i = 0; i < ETH_ALEN; i++)
                 save_dmac[i] = eth->h_dest[i];
@@ -221,49 +267,28 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         if (ret < 0)
                 goto restore_fail;
 
-        /* No need to save rewritten UDP checksum */
-
         /* clone the rewritten frame back into the same veth (ingress) */
         ctx->mark |= MIRROR_DONE_MARK;
         ret = bpf_clone_redirect(ctx, ctx->ifindex, BPF_F_INGRESS);
         bpf_printk("mirror: rewrite+clone if%d ret=%d\n", ctx->ifindex, ret);
 
-        /* ---------- re-pull IP after clone (verifier-safe) ------ */
-        if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                    (void **)&ip4, l3_off,
-                                    sizeof(*ip4), false))
-                return DROP_INVALID;
-        eth = data;
+        /* ---------- restore original for the continuing packet --- */
+        /* First restore the IP address */
+        ret = ipv4_store_daddr(ctx, save_daddr, l3_off);
+        if (ret < 0)
+                goto restore_fail;
 
-        /* ---------- restore original dst / MAC / checksums ------ */
-        /* Restore IP checksum - calculate what the checksum should be after restoring IP */
-        diff = csum_diff4(alt->ip, save_daddr, ip4->check);
-        ipv4_store_daddr(ctx, save_daddr, l3_off);
-        ipv4_store_check(ctx, (__sum16)diff, l3_off);
+        /* Restore MAC address */
+        ret = eth_store_daddr(ctx, save_dmac, 0);
+        if (ret < 0)
+                goto restore_fail;
 
-        /* Restore UDP checksum if it was present originally */
-        if (save_udp_csum != 0) {
-                /* Get current UDP header after IP restoration */
-                if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                            (void **)&udp,
-                                            l3_off + sizeof(*ip4),
-                                            sizeof(*udp), false)) {
-                        ctx->mark = save_mark | MIRROR_DONE_MARK;
-                        return TC_ACT_OK;
-                }
-                
-                /* Calculate UDP checksum diff: from current state back to original */
-                diff = csum_diff4(alt->ip, save_daddr, udp->check);
-                
-                bpf_l4_csum_replace(ctx,
-                        l3_off + sizeof(*ip4) + offsetof(struct udphdr, check),
-                        0, diff, sizeof(udp->check));
-        }
+        /* Restore checksums using proper calculation */
+        ret = restore_packet_checksums(ctx, l3_off, save_daddr, alt->ip);
+        if (ret < 0)
+                goto restore_fail;
 
-        /* Restore Ethernet destination MAC */
-        eth_store_daddr(ctx, save_dmac, 0);
         ctx->mark = save_mark | MIRROR_DONE_MARK;
-        
         return TC_ACT_OK;
 
 restore_fail:
