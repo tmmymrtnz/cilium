@@ -156,7 +156,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         struct dup_backends_key    key;
         struct dup_backends_value *b0, *b1, *b_cli, *alt;
         __be32                     save_daddr;
-        __sum16                    save_ip_csum, save_udp_csum;
+        __sum16                    save_udp_csum;
         __u8                       save_dmac[ETH_ALEN];
         __u32                      save_mark;
         __s32                      diff;
@@ -210,7 +210,6 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 
         /* ---------- save originals ----------------------------- */
         save_daddr    = ip4->daddr;
-        save_ip_csum  = ip4->check;
         save_udp_csum = udp->check;
 #pragma unroll
         for (i = 0; i < ETH_ALEN; i++)
