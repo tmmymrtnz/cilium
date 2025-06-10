@@ -150,23 +150,28 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
 {
         /* ---------- declarations (ANSI-C 89) ------------------- */
         void                      *data, *data_end;
+        struct ethhdr             *eth;
         struct iphdr              *ip4;
         struct udphdr             *udp;
         struct dup_backends_key    key;
-        struct dup_backends_value *b0, *b1, *b_cli, *orig_backend, *alt_backend;
+        struct dup_backends_value *b0, *b1, *b_cli, *alt;
+        __be32                     save_daddr;
+        __sum16                    save_ip_csum, save_udp_csum;
+        __u8                       save_dmac[ETH_ALEN];
         __u32                      save_mark;
-        int                        ret;
+        __s32                      diff;
+        int                        i, ret;
 
         /* Initialize variables */
         key.idx = 0;
-        orig_backend = NULL;
-        alt_backend = NULL;
+        alt = NULL;
 
         /* ---------- pull L2 & IPv4 ------------------------------ */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&ip4, l3_off,
                                     sizeof(*ip4), false))
                 return DROP_INVALID;
+        eth = data;
 
         if (ip4->protocol != IPPROTO_UDP)
                 return TC_ACT_OK;
@@ -196,53 +201,68 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         if (ctx->ifindex == b0->ifindex || ctx->ifindex == b1->ifindex)
                 return TC_ACT_OK;
 
-        /* Determine which backend this packet is originally destined for
-         * and which one should receive the mirrored copy */
-        if (ip4->daddr == b0->ip) {
-                orig_backend = b0;
-                alt_backend = b1;
-        } else if (ip4->daddr == b1->ip) {
-                orig_backend = b1;
-                alt_backend = b0;
-        } else {
-                /* Packet not destined for either backend, let it pass */
+        if (ip4->daddr == b0->ip)
+                alt = b1;
+        else if (ip4->daddr == b1->ip)
+                alt = b0;
+        else
                 return TC_ACT_OK;
-        }
 
-        /* ---------- save mark ----------------------------------- */
+        /* ---------- save originals ----------------------------- */
+        save_daddr    = ip4->daddr;
+        save_ip_csum  = ip4->check;
+        save_udp_csum = udp->check;
+#pragma unroll
+        for (i = 0; i < ETH_ALEN; i++)
+                save_dmac[i] = eth->h_dest[i];
         save_mark = ctx->mark;
 
-        /* ---------- rewrite packet for ALT backend and clone ---- */
-        ret = rewrite_packet_headers(ctx, alt_backend, l3_off);
-        if (ret < 0) {
-                bpf_printk("mirror: failed to rewrite headers for alt backend: %d\n", ret);
-                ctx->mark = save_mark | MIRROR_DONE_MARK;
-                return TC_ACT_OK; /* Don't drop original packet */
-        }
+        /* ---------- rewrite dest → ALT ------------------------- */
+        ret = rewrite_packet_headers(ctx, alt, l3_off);
+        if (ret < 0)
+                goto restore_fail;
 
-        /* Mark the packet and clone it to the alternate backend */
+        /* No need to save rewritten UDP checksum */
+
+        /* clone the rewritten frame back into the same veth (ingress) */
         ctx->mark |= MIRROR_DONE_MARK;
-        ret = bpf_clone_redirect(ctx, alt_backend->ifindex, 0); /* egress */
-        bpf_printk("mirror: clone to alt backend if%d ret=%d\n", alt_backend->ifindex, ret);
+        ret = bpf_clone_redirect(ctx, ctx->ifindex, BPF_F_INGRESS);
+        bpf_printk("mirror: rewrite+clone if%d ret=%d\n", ctx->ifindex, ret);
 
-        /* ---------- now rewrite back for original destination ---- */
-        /* NOTE: After bpf_clone_redirect, packet pointers are invalidated.
-         * We need to rewrite the current packet to go to its original destination. */
-        
-        ret = rewrite_packet_headers(ctx, orig_backend, l3_off);
-        if (ret < 0) {
-                bpf_printk("mirror: failed to rewrite headers for orig backend: %d\n", ret);
-                /* At this point, the clone was already sent. We can either drop
-                 * this packet or let it continue with potentially wrong headers.
-                 * For safety, we'll drop it. */
+        /* ---------- re-pull IP after clone (verifier-safe) ------ */
+        if (!__revalidate_data_pull(ctx, &data, &data_end,
+                                    (void **)&ip4, l3_off,
+                                    sizeof(*ip4), false))
                 return DROP_INVALID;
+        eth = data;
+
+        /* ---------- restore original dst / MAC / checksums ------ */
+        /* Restore IP address first */
+        ipv4_store_daddr(ctx, save_daddr, l3_off);
+        
+        /* Restore IP checksum using proper calculation */
+        diff = csum_diff4(alt->ip, save_daddr, save_ip_csum);
+        ipv4_store_check(ctx, (__sum16)diff, l3_off);
+
+        /* Restore UDP checksum if it was present originally */
+        if (save_udp_csum != 0) {
+                /* Calculate UDP checksum diff: from alt->ip back to original IP */
+                diff = csum_diff4(alt->ip, save_daddr, save_udp_csum);
+                
+                bpf_l4_csum_replace(ctx,
+                        l3_off + sizeof(*ip4) + offsetof(struct udphdr, check),
+                        0, diff, sizeof(__sum16));
         }
 
-        /* Restore mark (but keep MIRROR_DONE_MARK to prevent loops) */
+        /* Restore Ethernet destination MAC */
+        eth_store_daddr(ctx, save_dmac, 0);
         ctx->mark = save_mark | MIRROR_DONE_MARK;
         
-        /* Let the original packet continue to its original destination */
         return TC_ACT_OK;
+
+restore_fail:
+        ctx->mark = save_mark | MIRROR_DONE_MARK;
+        return ret;
 }
 
 #endif /* ENABLE_IPV4 */
