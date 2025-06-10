@@ -152,11 +152,11 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         void                      *data, *data_end;
         struct ethhdr             *eth;
         struct iphdr              *ip4;
-        struct udphdr             *udp, *udp_restore;
+        struct udphdr             *udp;
         struct dup_backends_key    key;
         struct dup_backends_value *b0, *b1, *b_cli, *alt;
         __be32                     save_daddr;
-        __sum16                    save_ip_csum, save_udp_csum, rewritten_udp_csum;
+        __sum16                    save_ip_csum, save_udp_csum;
         __u8                       save_dmac[ETH_ALEN];
         __u32                      save_mark;
         __s32                      diff;
@@ -165,7 +165,6 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         /* Initialize variables */
         key.idx = 0;
         alt = NULL;
-        rewritten_udp_csum = 0;
 
         /* ---------- pull L2 & IPv4 ------------------------------ */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
@@ -223,12 +222,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         if (ret < 0)
                 goto restore_fail;
 
-        /* ---------- save UDP checksum after rewrite ------------ */
-        if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                    (void **)&udp, l3_off + sizeof(*ip4),
-                                    sizeof(*udp), false))
-                goto restore_fail;
-        rewritten_udp_csum = udp->check;
+        /* No need to save rewritten UDP checksum */
 
         /* clone the rewritten frame back into the same veth (ingress) */
         ctx->mark |= MIRROR_DONE_MARK;
@@ -243,29 +237,21 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         eth = data;
 
         /* ---------- restore original dst / MAC / checksums ------ */
-        /* Restore IP address and checksum */
-        diff = csum_diff4(alt->ip, save_daddr, save_ip_csum);
+        /* Restore IP address first */
         ipv4_store_daddr(ctx, save_daddr, l3_off);
+        
+        /* Restore IP checksum using proper calculation */
+        diff = csum_diff4(alt->ip, save_daddr, save_ip_csum);
         ipv4_store_check(ctx, (__sum16)diff, l3_off);
 
         /* Restore UDP checksum if it was present originally */
         if (save_udp_csum != 0) {
-                /* Re-pull UDP header after IP restoration */
-                if (!__revalidate_data_pull(ctx, &data, &data_end,
-                                            (void **)&udp_restore,
-                                            l3_off + sizeof(*ip4),
-                                            sizeof(*udp_restore), false)) {
-                        /* If we can't pull UDP, at least mark as done */
-                        ctx->mark = save_mark | MIRROR_DONE_MARK;
-                        return TC_ACT_OK;
-                }
-                
-                /* Calculate diff from rewritten checksum back to original */
-                diff = csum_diff4(alt->ip, save_daddr, rewritten_udp_csum);
+                /* Calculate UDP checksum diff: from alt->ip back to original IP */
+                diff = csum_diff4(alt->ip, save_daddr, save_udp_csum);
                 
                 bpf_l4_csum_replace(ctx,
                         l3_off + sizeof(*ip4) + offsetof(struct udphdr, check),
-                        0, diff, sizeof(udp_restore->check));
+                        0, diff, sizeof(__sum16));
         }
 
         /* Restore Ethernet destination MAC */
