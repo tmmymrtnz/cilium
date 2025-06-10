@@ -175,6 +175,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
     int                        ret;
     int                        i;
     int                        ip_hdr_len;
+    __u32                      csum_off;
     __s32                      diff;
 
     /* Map lookups */
@@ -243,17 +244,31 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
     eth = data;
     ip_hdr_len = ip4->ihl * 4;
 
-    /* Restore IP dest and checksum */
-    ipv4_store_daddr(ctx, save_daddr, l3_off);
-    diff = csum_diff4(alt->ip, save_daddr, save_ip_csum);
-    ipv4_store_check(ctx, (__sum16)diff, l3_off);
+    /* Restore IP checksum and dest */
+    csum_off = l3_off + offsetof(struct iphdr, check);
+    ret = bpf_l3_csum_replace(ctx,
+                              csum_off,
+                              alt->ip,
+                              save_daddr,
+                              sizeof(save_daddr));
+    if (ret < 0)
+        return ret;
+    ret = ipv4_store_daddr(ctx, save_daddr, l3_off);
+    if (ret < 0)
+        return ret;
 
     /* Restore UDP checksum if present */
     if (save_udp_csum != 0) {
-        diff = csum_diff4(alt->ip, save_daddr, save_udp_csum);
-        bpf_l4_csum_replace(ctx,
-            l3_off + ip_hdr_len + offsetof(struct udphdr, check),
-            0, diff, PSEUDO_HDR);
+        /* Compute delta to revert pseudo-header change */
+        diff = csum_diff4(alt->ip, save_daddr, 0);
+        ret = bpf_l4_csum_replace(ctx,
+                                  l3_off + ip_hdr_len +
+                                  offsetof(struct udphdr, check),
+                                  0,
+                                  diff,
+                                  PSEUDO_HDR);
+        if (ret < 0)
+            return ret;
     }
 
     /* Restore Ethernet dest MAC and mark */
