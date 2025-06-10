@@ -151,21 +151,20 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         void                      *data, *data_end;
         struct ethhdr             *eth;
         struct iphdr              *ip4;
-        struct udphdr             *udp;        /* pointer _before_ rewrite */
-        struct udphdr             *udp_now;    /* pointer _after_ rewrite  */
+        struct udphdr             *udp;          /* before rewrite          */
+        struct udphdr             *udp_now;      /* after  rewrite          */
         struct dup_backends_key    key = {};
         struct dup_backends_value *b0, *b1, *b_cli, *alt;
         __be32                     save_daddr;
         __sum16                    save_ip_csum, save_udp_csum;
         __u8                       save_dmac[ETH_ALEN];
+        __u16                      udp_now_check;        /* scalar copy */
         __u32                      save_mark;
         int                        i, ret;
 
-        /* ------------------------------------------------------ */
-        alt      = NULL;
-        udp_now  = NULL;
+        alt = NULL;              /* keep the compiler happy */
 
-        /* ---------- pull L2 & IPv4 ---------------------------- */
+        /* ---------- pull Ethernet + IPv4 ---------------------- */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&ip4, l3_off,
                                     sizeof(*ip4), false))
@@ -175,7 +174,7 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         if (ip4->protocol != IPPROTO_UDP)
                 return TC_ACT_OK;
 
-        /* pull UDP header (before any rewrite) */
+        /* pull UDP header ( original ) */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&udp,
                                     l3_off + (ip4->ihl * 4),
@@ -185,18 +184,16 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         if (bpf_ntohs(udp->dest) != UDP_PORT_9000)
                 return TC_ACT_OK;
 
-        /* already mirrored? */
         if (ctx->mark & MIRROR_DONE_MARK)
                 return TC_ACT_OK;
 
-        /* ---------- backend map look-ups ---------------------- */
+        /* -------- look up back-ends --------------------------- */
         key.idx = 0; b0    = map_lookup_elem(&dup_backends, &key);
         key.idx = 1; b1    = map_lookup_elem(&dup_backends, &key);
         key.idx = 2; b_cli = map_lookup_elem(&dup_backends, &key);
         if (!(b0 && b1 && b_cli))
                 return TC_ACT_OK;
 
-        /* don’t mirror back-end → client traffic */
         if (ctx->ifindex == b0->ifindex || ctx->ifindex == b1->ifindex)
                 return TC_ACT_OK;
 
@@ -205,9 +202,9 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
         else if (ip4->daddr == b1->ip)
                 alt = b0;
         else
-                return TC_ACT_OK; /* not traffic to either mirrored back-end */
+                return TC_ACT_OK;
 
-        /* ---------- save originals ---------------------------- */
+        /* -------- save original fields ------------------------ */
         save_daddr    = ip4->daddr;
         save_ip_csum  = ip4->check;
         save_udp_csum = udp->check;
@@ -215,16 +212,16 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                 save_dmac[i] = eth->h_dest[i];
         save_mark = ctx->mark;
 
-        /* ---------- rewrite & clone --------------------------- */
+        /* -------- rewrite towards ALT & clone ----------------- */
         ret = rewrite_packet_headers(ctx, alt, l3_off);
         if (ret < 0)
                 goto restore_fail;
 
-        ctx->mark |= MIRROR_DONE_MARK;          /* avoid re-cloning */
+        ctx->mark |= MIRROR_DONE_MARK;          /* clone only once */
         ret = bpf_clone_redirect(ctx, ctx->ifindex, BPF_F_INGRESS);
         bpf_printk("mirror: rewrite+clone if%d ret=%d\n", ctx->ifindex, ret);
 
-        /* ---------- pull fresh IP & UDP pointers -------------- */
+        /* -------- pull fresh headers (post-rewrite) ----------- */
         if (!__revalidate_data_pull(ctx, &data, &data_end,
                                     (void **)&ip4, l3_off,
                                     sizeof(*ip4), false))
@@ -234,27 +231,31 @@ handle_udp_9000_mirroring(struct __ctx_buff *ctx, __u32 l3_off)
                                     l3_off + (ip4->ihl * 4),
                                     sizeof(*udp_now), false))
                 return DROP_INVALID;
-        eth = (struct ethhdr *)data;
+        eth            = (struct ethhdr *)data;
+        udp_now_check  = udp_now->check;        /* scalar copy – safe */
 
-        /* ---------- restore IP dst / checksum ----------------- */
+        /* -------- restore dst-IP, checksums, MAC -------------- */
         {
                 __s32 diff;
 
+                /* IP header */
                 diff = csum_diff4(alt->ip, save_daddr, save_ip_csum);
                 ipv4_store_daddr(ctx, save_daddr, l3_off);
                 ipv4_store_check(ctx, (__sum16)diff, l3_off);
 
-                /* ---------- restore UDP checksum (only if original had one) */
+                /* UDP checksum (only if original packet had one) */
                 if (save_udp_csum) {
-                        diff = csum_diff4(alt->ip, save_daddr, udp_now->check);
+                        diff = csum_diff4(alt->ip, save_daddr, udp_now_check);
                         bpf_l4_csum_replace(ctx,
                                 l3_off + sizeof(*ip4) +
                                 offsetof(struct udphdr, check),
-                                0, diff, sizeof(udp_now->check));
+                                0, diff, sizeof(udp_now_check));
                 }
 
-                /* ---------- restore Ethernet DMAC & skb mark --------------- */
+                /* Ethernet DMAC */
                 eth_store_daddr(ctx, save_dmac, 0);
+
+                /* keep MIRROR_DONE_MARK so clone won’t recurse */
                 ctx->mark = save_mark | MIRROR_DONE_MARK;
         }
         return TC_ACT_OK;
